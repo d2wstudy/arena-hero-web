@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, APIError, apiURL } from '../lib/api'
+import { api, APIError, apiURL, officialApi } from '../lib/api'
 import { demoReceipt, demoState } from '../lib/demo'
 import { isReceivedNotice, type CommandReceipts } from '../lib/commandPlans'
 import { loadExplored, rememberVisible, type ExploredCell } from '../lib/exploration'
@@ -14,8 +14,8 @@ type GameMessage =
 const reconnectBaseMs = 250
 const reconnectMaxMs = 5_000
 
-function gameWebSocketURL() {
-  const url = new URL(apiURL('/api/v1/game/ws'), window.location.href)
+function gameWebSocketURL(path = '/api/v1/game/ws', baseURL?: string) {
+  const url = new URL(apiURL(path, baseURL), window.location.href)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   return url.toString()
 }
@@ -26,7 +26,7 @@ function reconnectDelay(attempt: number) {
   return Math.round(bounded * (0.8 + Math.random() * 0.4))
 }
 
-export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false) {
+export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false, officialAgent = false) {
   const [liveTick, setLiveTick] = useState<number | null>(demo ? 10583 : null)
   const [liveState, setLiveState] = useState<PlayerState | null>(demo ? demoState : null)
   const [phase, setPhase] = useState<StreamPhase>(demo ? 'open' : 'connecting')
@@ -66,6 +66,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let reconnectAttempt = 0
+    let connecting = false
     let stopped = false
 
     const scheduleReconnect = () => {
@@ -78,10 +79,10 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
       }, delay)
     }
 
-    const connect = () => {
+    const openSocket = () => {
       if (stopped) return
-      setPhase((current) => current === 'offline' ? 'connecting' : current)
-      const next = new WebSocket(gameWebSocketURL())
+      const path = officialAgent ? '/api/official/v1/game/ws' : '/api/v1/game/ws'
+      const next = new WebSocket(gameWebSocketURL(path, localMatch || officialAgent ? '' : undefined))
       socket = next
       next.onopen = () => {
         if (socket !== next) return
@@ -94,7 +95,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         try {
           const message = JSON.parse(String(event.data)) as GameMessage
           if (message.type === 'tick') {
-            if (!Number.isSafeInteger(message.data) || message.data < 0) throw new Error('invalid tick')
+            if (!Number.isSafeInteger(message.data) || message.data <= 0) throw new Error('invalid tick')
             tickRef.current = message.data; setLiveTick(message.data); setPhase('syncing'); setLiveReceipts({}); setLocalStatus(null); setError('')
             if (godViewRef.current) {
               godRequestRef.current += 1
@@ -143,7 +144,9 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         }
       }
       next.onerror = () => {
-        if (socket === next) setPhase('offline')
+        if (socket !== next) return
+        setPhase('offline')
+        if (officialAgent) setError('OFFICIAL_PROXY_UNAVAILABLE')
       }
       next.onclose = (event) => {
         if (socket !== next) return
@@ -151,11 +154,37 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         setPhase('offline')
         if (stopped || event.code === 1000) return
         if (event.code === 1008) {
-          setError('UNAUTHORIZED')
+          setError(officialAgent ? 'OFFICIAL_AGENT_UNAUTHORIZED' : 'UNAUTHORIZED')
           return
+        }
+        if (officialAgent && [1006, 1011, 1013].includes(event.code)) {
+          setError('OFFICIAL_PROXY_UNAVAILABLE')
         }
         scheduleReconnect()
       }
+    }
+
+    const connect = () => {
+      if (stopped || socket || connecting) return
+      setPhase((current) => current === 'offline' ? 'connecting' : current)
+      if (!officialAgent) {
+        openSocket()
+        return
+      }
+      connecting = true
+      void officialApi.startSession().then(() => {
+        connecting = false
+        if (!stopped) openSocket()
+      }).catch((cause) => {
+        connecting = false
+        if (stopped) return
+        const code = cause instanceof APIError ? cause.code : 'OFFICIAL_PROXY_UNAVAILABLE'
+        setError(code)
+        setPhase('offline')
+        if (code !== 'OFFICIAL_PROXY_ORIGIN_INVALID' && code !== 'OFFICIAL_AGENT_UNAUTHORIZED') {
+          scheduleReconnect()
+        }
+      })
     }
 
     if (localMatch) {
@@ -177,13 +206,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       if (socket) socket.close(1000, 'component unmounted')
     }
-  }, [demo, explorationNamespace, localMatch, mergeExplored])
+  }, [demo, explorationNamespace, localMatch, mergeExplored, officialAgent])
 
   const submit = useCallback(async (plan: CommandPlan) => {
     if (replayRef.current || godViewRef.current) throw new Error('local replay or god observation is read-only')
     setError('')
     try {
-      const receipt = demo ? { ...demoReceipt, tick: plan.tick, received_at: new Date().toISOString() } : await api.submitCommands(plan)
+      const receipt = demo
+        ? { ...demoReceipt, tick: plan.tick, received_at: new Date().toISOString() }
+        : officialAgent
+          ? await officialApi.submitCommands(plan)
+          : await api.submitCommands(plan)
       if (demo) {
         setLiveReceipts((current) => ({
           ...current,
@@ -199,7 +232,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
       }
       throw cause
     }
-  }, [demo])
+  }, [demo, officialAgent])
 
   const advance = useCallback(async () => {
     const currentTick = tickRef.current
@@ -427,5 +460,6 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     setHumanFullVision,
     addLocalParticipant,
     setTickLabel,
+    submissionSource: officialAgent ? 'AGENT' as const : 'MANUAL' as const,
   }
 }

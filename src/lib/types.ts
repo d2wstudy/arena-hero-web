@@ -107,6 +107,11 @@ export interface LocalSession {
   god_mode: boolean
 }
 
+export interface OfficialAgentSession {
+  csrf_token: string
+  mode: 'official-agent'
+}
+
 export interface LocalBotStatus {
   username: string
   ready: boolean

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, apiURL, setCSRF } from './api'
+import { api, apiURL, officialApi, setCSRF } from './api'
 
 describe('API URL', () => {
   it('keeps local development requests relative', () => {
@@ -51,6 +51,7 @@ describe('manual command API', () => {
   })
 
   it('starts a local session and advances the requested Tick with CSRF', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.arenahero.io')
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 12 }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
@@ -66,7 +67,7 @@ describe('manual command API', () => {
   })
 
   it('loads replay history and creates a CSRF-protected branch', async () => {
-    setCSRF('local-csrf')
+    setCSRF('local-csrf', 'local')
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ match_id: 'match-1', tick: 4, live: false, state: {}, receipts: {}, explored: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -85,7 +86,7 @@ describe('manual command API', () => {
   })
 
   it('loads a global snapshot and applies a CSRF-protected god operation', async () => {
-    setCSRF('local-csrf')
+    setCSRF('local-csrf', 'local')
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ match_id: 'match-1', tick: 4, live: false, state: {}, players: [], tracked_chunks: [], resource_cells: [], plans: [], explored: [], operations: [], settings: { human_full_vision: false }, contract: {}, world_sha256: 'a'.repeat(64) }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 7, operation: 'SET_HUMAN_FULL_VISION', changed: true, settings: { human_full_vision: true } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -101,7 +102,7 @@ describe('manual command API', () => {
   })
 
   it('adds a local participant and labels a Tick with CSRF', async () => {
-    setCSRF('local-csrf')
+    setCSRF('local-csrf', 'local')
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 7, operation: 'ADD_PARTICIPANT', participant: { id: 'player-1', username: 'late_agent', controller: 'AGENT', status: 'PENDING', token: 'local-token' }, record: {} }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, match_id: 'match-1', tick: 4, cleared: false, label: { match_id: 'match-1', tick: 4, label: 'First contact', updated_at: '2026-08-06T00:00:00Z' }, labels: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -129,6 +130,22 @@ describe('manual command API', () => {
     const headers = new Headers(init?.headers)
     expect(headers.get('X-CSRF-Token')).toBe('csrf-test')
     expect(JSON.parse(init?.body as string)).toEqual({})
+  })
+
+  it('isolates the official Agent proxy session and command CSRF', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.arenahero.io')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'official-csrf', mode: 'official-agent' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 9, source: 'AGENT', received_at: '2026-08-06T00:00:00Z' }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
+
+    await officialApi.startSession()
+    await officialApi.submitCommands({ tick: 9, unit_actions: {} })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/official/session')
+    const [path, init] = fetchMock.mock.calls[1]
+    expect(path).toBe('/api/official/v1/game/commands')
+    expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('official-csrf')
+    expect(new Headers(init?.headers).get('Idempotency-Key')).toMatch(/[0-9a-f-]{36}/)
   })
 
   it('starts GitHub linking with a CSRF-protected POST', async () => {

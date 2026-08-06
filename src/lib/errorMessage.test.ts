@@ -22,4 +22,10 @@ describe('getErrorMessage', () => {
     await i18n.changeLanguage('zh')
     expect(getErrorMessage('EMAIL_NOT_VERIFIED')).toBe('请先完成邮箱验证，再登录游戏。')
   })
+
+  it('explains official Agent proxy failures without treating them as account sessions', async () => {
+    expect(getErrorMessage('OFFICIAL_AGENT_UNAUTHORIZED')).toBe('The configured Arena Hero Agent token was rejected or is inactive.')
+    await i18n.changeLanguage('zh')
+    expect(getErrorMessage('OFFICIAL_PROXY_UNAVAILABLE')).toBe('本地桥接无法连接正式服，请检查本地代理后重试。')
+  })
 })

@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -10,20 +10,26 @@ export class APIError extends Error {
   }
 }
 
-const csrfKey = 'arena-hero.csrf'
+export type CSRFScope = 'account' | 'local' | 'official'
 
-export const getCSRF = () => localStorage.getItem(csrfKey) ?? ''
-export const setCSRF = (token: string) => localStorage.setItem(csrfKey, token)
-export const clearCSRF = () => localStorage.removeItem(csrfKey)
+const csrfKeys: Record<CSRFScope, string> = {
+  account: 'arena-hero.csrf',
+  local: 'arena-hero.csrf.local',
+  official: 'arena-hero.csrf.official',
+}
+
+export const getCSRF = (scope: CSRFScope = 'account') => localStorage.getItem(csrfKeys[scope]) ?? ''
+export const setCSRF = (token: string, scope: CSRFScope = 'account') => localStorage.setItem(csrfKeys[scope], token)
+export const clearCSRF = (scope: CSRFScope = 'account') => localStorage.removeItem(csrfKeys[scope])
 
 export function apiURL(path: string, baseURL = import.meta.env.VITE_API_BASE_URL ?? '') {
   return `${baseURL.trim().replace(/\/+$/, '')}${path}`
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, baseURL?: string): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  const response = await fetch(apiURL(path), { ...init, headers, credentials: 'include' })
+  const response = await fetch(apiURL(path, baseURL), { ...init, headers, credentials: 'include' })
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string }
     throw new APIError(body.error ?? 'REQUEST_FAILED', response.status, body.message)
@@ -32,41 +38,57 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
+const localRequest = <T>(path: string, init: RequestInit = {}) => request<T>(path, init, '')
+
+async function officialRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  try {
+    return await request<T>(path, init, '')
+  } catch (cause) {
+    if (cause instanceof APIError) {
+      if (cause.code === 'UNAUTHORIZED') {
+        throw new APIError('OFFICIAL_AGENT_UNAUTHORIZED', cause.status, cause.message)
+      }
+      throw cause
+    }
+    throw new APIError('OFFICIAL_PROXY_UNAVAILABLE', 0)
+  }
+}
+
 export const api = {
   startLocalSession: async () => {
-    const session = await request<LocalSession>('/api/local/session', { method: 'POST' })
-    setCSRF(session.csrf_token)
+    const session = await localRequest<LocalSession>('/api/local/session', { method: 'POST' })
+    setCSRF(session.csrf_token, 'local')
     return session
   },
-  localMatch: () => request<LocalMatchStatus>('/api/local/match'),
-  localHistory: (matchId?: string) => request<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`),
-  localReplay: (matchId: string, tick: number) => request<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`),
-  localGod: (matchId?: string | null, tick?: number | null) => request<LocalGodSnapshot>(matchId && tick !== null && tick !== undefined
+  localMatch: () => localRequest<LocalMatchStatus>('/api/local/match'),
+  localHistory: (matchId?: string) => localRequest<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`),
+  localReplay: (matchId: string, tick: number) => localRequest<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`),
+  localGod: (matchId?: string | null, tick?: number | null) => localRequest<LocalGodSnapshot>(matchId && tick !== null && tick !== undefined
     ? `/api/local/god?match_id=${encodeURIComponent(matchId)}&tick=${tick}`
     : '/api/local/god'),
-  setHumanFullVision: (enabled: boolean) => request<LocalGodOperationReceipt>('/api/local/god', {
+  setHumanFullVision: (enabled: boolean) => localRequest<LocalGodOperationReceipt>('/api/local/god', {
     method: 'POST',
-    headers: { 'X-CSRF-Token': getCSRF() },
+    headers: { 'X-CSRF-Token': getCSRF('local') },
     body: JSON.stringify({ operation: 'SET_HUMAN_FULL_VISION', enabled }),
   }),
-  addLocalParticipant: (username: string, controller: 'AGENT' | 'BOT') => request<LocalParticipantAdmissionReceipt>('/api/local/god', {
+  addLocalParticipant: (username: string, controller: 'AGENT' | 'BOT') => localRequest<LocalParticipantAdmissionReceipt>('/api/local/god', {
     method: 'POST',
-    headers: { 'X-CSRF-Token': getCSRF() },
+    headers: { 'X-CSRF-Token': getCSRF('local') },
     body: JSON.stringify({ operation: 'ADD_PARTICIPANT', username, controller }),
   }),
-  setLocalTickLabel: (matchId: string, tick: number, label: string) => request<LocalTickLabelReceipt>('/api/local/label', {
+  setLocalTickLabel: (matchId: string, tick: number, label: string) => localRequest<LocalTickLabelReceipt>('/api/local/label', {
     method: 'POST',
-    headers: { 'X-CSRF-Token': getCSRF() },
+    headers: { 'X-CSRF-Token': getCSRF('local') },
     body: JSON.stringify({ match_id: matchId, tick, label }),
   }),
-  advanceLocalTick: (tick: number) => request<LocalAdvanceReceipt>('/api/local/advance', {
+  advanceLocalTick: (tick: number) => localRequest<LocalAdvanceReceipt>('/api/local/advance', {
     method: 'POST',
-    headers: { 'X-CSRF-Token': getCSRF() },
+    headers: { 'X-CSRF-Token': getCSRF('local') },
     body: JSON.stringify({ tick }),
   }),
-  branchLocalMatch: (matchId: string, tick: number) => request<LocalBranchReceipt>('/api/local/branch', {
+  branchLocalMatch: (matchId: string, tick: number) => localRequest<LocalBranchReceipt>('/api/local/branch', {
     method: 'POST',
-    headers: { 'X-CSRF-Token': getCSRF() },
+    headers: { 'X-CSRF-Token': getCSRF('local') },
     body: JSON.stringify({ match_id: matchId, tick }),
   }),
   authOptions: () => request<AuthOptions>('/api/v1/auth/options'),
@@ -107,6 +129,19 @@ export const api = {
   submitCommands: (plan: CommandPlan) => request<Receipt>('/api/v1/game/commands', {
     method: 'POST',
     headers: { 'X-CSRF-Token': getCSRF(), 'Idempotency-Key': crypto.randomUUID() },
+    body: JSON.stringify(plan),
+  }),
+}
+
+export const officialApi = {
+  startSession: async () => {
+    const session = await officialRequest<OfficialAgentSession>('/api/official/session', { method: 'POST' })
+    setCSRF(session.csrf_token, 'official')
+    return session
+  },
+  submitCommands: (plan: CommandPlan) => officialRequest<Receipt>('/api/official/v1/game/commands', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF('official'), 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify(plan),
   }),
 }

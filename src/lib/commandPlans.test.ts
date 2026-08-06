@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isReceivedNotice, mergeCommandPlans, prepareManualUnitActionPlan } from './commandPlans'
+import { isReceivedNotice, mergeCommandPlans, prepareUnitActionPlan } from './commandPlans'
 
 const agent = {
   tick: 12,
@@ -33,6 +33,41 @@ describe('command plans', () => {
     })
     expect(effective.plan.core_action).toEqual({ type: 'REPAIR_SHIELD' })
     expect(effective.coreSource).toBe('AGENT')
+  })
+
+  it('treats an official-page draft as an Agent replacement under Manual overrides', () => {
+    const manual = {
+      tick: 12,
+      source: 'MANUAL' as const,
+      received_at: '2026-07-26T00:00:01Z',
+      plan: {
+        tick: 12,
+        unit_actions: {
+          '00000000-0000-4000-8000-000000000001': { type: 'WAIT' as const },
+        },
+        core_action: { type: 'WAIT' as const },
+      },
+    }
+    const effective = mergeCommandPlans(12, { AGENT: agent, MANUAL: manual }, {
+      tick: 12,
+      unit_actions: {
+        '00000000-0000-4000-8000-000000000001': { type: 'MOVE', direction: 'LEFT' },
+        '00000000-0000-4000-8000-000000000003': { type: 'HARVEST' },
+      },
+      core_action: { type: 'START_MOVE', direction: 'RIGHT' },
+    }, 'AGENT')
+
+    expect(effective.plan.unit_actions).toEqual({
+      '00000000-0000-4000-8000-000000000001': { type: 'WAIT' },
+      '00000000-0000-4000-8000-000000000003': { type: 'HARVEST' },
+    })
+    expect(effective.unitSources).toEqual({
+      '00000000-0000-4000-8000-000000000001': 'MANUAL',
+      '00000000-0000-4000-8000-000000000003': 'AGENT',
+    })
+    expect(effective.plan.unit_actions['00000000-0000-4000-8000-000000000002']).toBeUndefined()
+    expect(effective.plan.core_action).toEqual({ type: 'WAIT' })
+    expect(effective.coreSource).toBe('MANUAL')
   })
 
   it('accepts only canonical received plans with matching ticks', () => {
@@ -76,7 +111,7 @@ describe('command plans', () => {
 
   it('pauses a Core auto-route when a colocated Worker deposits', () => {
     const workerId = '00000000-0000-4000-8000-000000000001'
-    const next = prepareManualUnitActionPlan({
+    const next = prepareUnitActionPlan({
       status: 'ACTIVE',
       resources: 5,
       population: 1,
@@ -90,12 +125,45 @@ describe('command plans', () => {
       tick: 12,
       unit_actions: { [workerId]: { type: 'MOVE', direction: 'LEFT' } },
       core_action: { type: 'START_MOVE', direction: 'RIGHT' },
-    }, workerId, { type: 'DEPOSIT' })
+    }, 'MANUAL', workerId, { type: 'DEPOSIT' })
 
     expect(next).toEqual({
       tick: 12,
       unit_actions: { [workerId]: { type: 'DEPOSIT' } },
       core_action: { type: 'WAIT' },
+    })
+  })
+
+  it('does not pretend an Agent draft can pause a Manual Core route', () => {
+    const workerId = '00000000-0000-4000-8000-000000000001'
+    const manual = {
+      tick: 12,
+      source: 'MANUAL' as const,
+      received_at: '2026-07-26T00:00:01Z',
+      plan: {
+        tick: 12,
+        unit_actions: {},
+        core_action: { type: 'START_MOVE' as const, direction: 'RIGHT' as const },
+      },
+    }
+    const next = prepareUnitActionPlan({
+      status: 'ACTIVE',
+      resources: 5,
+      population: 1,
+      champion_beacon: { position: [0, 0] },
+      objects: [
+        { kind: 'CORE', controlled: true, position: [4, 5], state: 'NORMAL' },
+        { kind: 'UNIT', id: workerId, controlled: true, position: [4, 5], unit_type: 'WORKER', cargo: 1 },
+      ],
+      events: [],
+    }, { MANUAL: manual }, {
+      tick: 12,
+      unit_actions: {},
+    }, 'AGENT', workerId, { type: 'DEPOSIT' })
+
+    expect(next).toEqual({
+      tick: 12,
+      unit_actions: { [workerId]: { type: 'DEPOSIT' } },
     })
   })
 })

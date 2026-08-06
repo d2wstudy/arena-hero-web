@@ -54,6 +54,7 @@ describe('useGameStream WebSocket transport', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
     vi.unstubAllGlobals()
   })
 
@@ -141,6 +142,49 @@ describe('useGameStream WebSocket transport', () => {
     expect(result.current.localStatus?.bots[0]).toEqual({ username: 'bot', ready: true })
     expect(result.current.localHistory?.active_match_id).toBe('match-1')
     expect(result.current.explored.get('0,0')?.kind).toBe('EMPTY')
+    unmount()
+  })
+
+  it('bootstraps the official proxy before its WebSocket and submits to the Agent slot', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.arenahero.io')
+    localStorage.setItem('arena-hero.csrf', 'account-csrf')
+    localStorage.setItem('arena-hero.csrf.local', 'local-csrf')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      if (path === '/api/official/session') {
+        return Promise.resolve(new Response(JSON.stringify({ csrf_token: 'official-csrf', mode: 'official-agent' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      if (path === '/api/official/v1/game/commands') {
+        return Promise.resolve(new Response(JSON.stringify({ accepted: true, tick: 42, source: 'AGENT', received_at: '2026-08-06T00:00:00Z' }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'official-agent', false, true))
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/official/session')
+    expect(FakeWebSocket.instances).toHaveLength(0)
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    const socket = FakeWebSocket.instances[0]
+    expect(socket.url).toBe('ws://localhost:3000/api/official/v1/game/ws')
+
+    act(() => {
+      socket.open()
+      socket.message({ type: 'tick', data: 42 })
+      socket.message({ type: 'state', data: demoState })
+    })
+    expect(result.current.submissionSource).toBe('AGENT')
+
+    await act(async () => {
+      await result.current.submit({ tick: 42, unit_actions: {} })
+    })
+    const [path, init] = fetchMock.mock.calls[1]
+    expect(path).toBe('/api/official/v1/game/commands')
+    expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('official-csrf')
+    expect(new Headers(init?.headers).get('Idempotency-Key')).toMatch(/[0-9a-f-]{36}/)
+    expect(localStorage.getItem('arena-hero.csrf')).toBe('account-csrf')
+    expect(localStorage.getItem('arena-hero.csrf.local')).toBe('local-csrf')
     unmount()
   })
 

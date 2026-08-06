@@ -30,10 +30,11 @@ export interface EffectiveCommandPlan extends CommandPlanSources {
   plan: CommandPlan
 }
 
-export function prepareManualUnitActionPlan(
+export function prepareUnitActionPlan(
   state: PlayerState,
   receipts: CommandReceipts,
   plan: CommandPlan,
+  draftSource: CommandSource,
   unitId: string,
   action: UnitAction | null,
 ): CommandPlan {
@@ -61,8 +62,9 @@ export function prepareManualUnitActionPlan(
   )
   if (!core) return nextPlan
 
-  const effective = mergeCommandPlans(plan.tick, receipts, plan)
-  return effective.plan.core_action?.type === 'START_MOVE'
+  const effective = mergeCommandPlans(plan.tick, receipts, plan, draftSource)
+  const canOverrideCore = draftSource === 'MANUAL' || effective.coreSource === 'AGENT'
+  return effective.plan.core_action?.type === 'START_MOVE' && canOverrideCore
     ? { ...nextPlan, core_action: { type: 'WAIT' } }
     : nextPlan
 }
@@ -70,11 +72,15 @@ export function prepareManualUnitActionPlan(
 export function mergeCommandPlans(
   tick: number,
   receipts: CommandReceipts,
-  manualPlan?: CommandPlan,
+  draftPlan?: CommandPlan,
+  draftSource: CommandSource = 'MANUAL',
 ): EffectiveCommandPlan {
-  const agent = receipts.AGENT?.tick === tick ? receipts.AGENT.plan : undefined
-  const manual = manualPlan?.tick === tick
-    ? manualPlan
+  const draft = draftPlan?.tick === tick ? draftPlan : undefined
+  const agent = draftSource === 'AGENT' && draft
+    ? draft
+    : receipts.AGENT?.tick === tick ? receipts.AGENT.plan : undefined
+  const manual = draftSource === 'MANUAL' && draft
+    ? draft
     : receipts.MANUAL?.tick === tick ? receipts.MANUAL.plan : undefined
   const unitActions: Record<string, UnitAction> = {}
   const unitSources: Record<string, CommandSource> = {}

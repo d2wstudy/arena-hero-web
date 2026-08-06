@@ -18,12 +18,12 @@ import { getErrorMessage } from '../lib/errorMessage'
 import { getActionAvailability } from '../lib/actionAvailability'
 import { coreDestructionFromEvents } from '../lib/destruction'
 import { applyAutonomousMovement, buildMovementRoutes, findMovementPath, reachableMovementDestinations, readMovementGoals, type MovementGoals, type PathFailure } from '../lib/pathfinding'
-import { mergeCommandPlans, prepareManualUnitActionPlan } from '../lib/commandPlans'
+import { mergeCommandPlans, prepareUnitActionPlan } from '../lib/commandPlans'
 import type { CommandPlan, CoreAction, Position, UnitAction, WorldObject } from '../lib/types'
 import { positionKey } from '../lib/visibility'
 
-export function ArenaPage({ demo = false, local = false }: { demo?: boolean; local?: boolean }) {
-  const { t } = useTranslation(); const { user } = useAuth(); const playerNamespace = demo ? 'demo' : local ? 'local' : user?.username ?? 'anonymous'; const game = useGameStream(demo, playerNamespace, local)
+export function ArenaPage({ demo = false, local = false, official = false }: { demo?: boolean; local?: boolean; official?: boolean }) {
+  const { t } = useTranslation(); const { user } = useAuth(); const playerNamespace = demo ? 'demo' : local ? 'local' : official ? 'official-agent' : user?.username ?? 'anonymous'; const game = useGameStream(demo, playerNamespace, local, official)
   const submitGamePlan = game.submit
   const movementStorageKey = `arena-hero.movement-goals.${playerNamespace}`
   const [selectedId, setSelectedId] = useState<string | null>(null); const [targetMode, setTargetMode] = useState<'SHOOT' | 'SWEEP' | null>(null); const [moveSelecting, setMoveSelecting] = useState(false)
@@ -48,11 +48,11 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
   useEffect(() => { localStorage.setItem(movementStorageKey, JSON.stringify(movementGoals)) }, [movementGoals, movementStorageKey])
   useEffect(() => { if (game.tick) { const nextPlan = { tick: game.tick, unit_actions: {} }; tickRef.current = game.tick; planRef.current = nextPlan; autoMovementTickRef.current = null; setPlan(nextPlan); setTargetMode(null); setMoveSelecting(false); setMovementError(null) } }, [game.tick])
   useEffect(() => {
-    const authoritative = game.receipts.MANUAL
+    const authoritative = game.receipts[game.submissionSource]
     if (!game.tick || authoritative?.tick !== game.tick) return
     planRef.current = authoritative.plan
     setPlan(authoritative.plan)
-  }, [game.receipts.MANUAL, game.tick])
+  }, [game.receipts, game.submissionSource, game.tick])
   useEffect(() => { if (respawning) { setSelectedId(null); setTargetMode(null); setMoveSelecting(false); setMovementError(null); setAnchor(null); if (Object.keys(movementGoalsRef.current).length) replaceMovementGoals({}) } }, [replaceMovementGoals, respawning])
   useEffect(() => { if (readOnly) { setTargetMode(null); setMoveSelecting(false); setMovementError(null); setAnchor(null) } }, [readOnly])
   useEffect(() => {
@@ -71,7 +71,7 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     if (destruction.selfDestructed) sessionStorage.setItem(selfDestructStorageKey, 'true')
     else sessionStorage.removeItem(selfDestructStorageKey)
   }, [destroyerStorageKey, game.state, respawning, selfDestructStorageKey])
-  const commitManualPlan = useCallback((nextPlan: CommandPlan) => {
+  const commitSubmittedPlan = useCallback((nextPlan: CommandPlan) => {
     planRef.current = nextPlan; setPlan(nextPlan)
     submitQueueRef.current = submitQueueRef.current.then(async () => {
       if (nextPlan.tick !== tickRef.current) return
@@ -85,8 +85,8 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     const result = applyAutonomousMovement(game.state, game.explored, movementGoalsRef.current, currentPlan)
     const stale = new Set([...result.completed, ...result.removed])
     if (stale.size) replaceMovementGoals(Object.fromEntries(Object.entries(movementGoalsRef.current).filter(([objectId]) => !stale.has(objectId))))
-    if (result.changed) commitManualPlan(result.plan)
-  }, [commitManualPlan, game.explored, game.phase, game.state, game.tick, readOnly, replaceMovementGoals, respawning])
+    if (result.changed) commitSubmittedPlan(result.plan)
+  }, [commitSubmittedPlan, game.explored, game.phase, game.state, game.tick, readOnly, replaceMovementGoals, respawning])
   const selected = useMemo(() => game.state?.objects.find((object) => object.id === selectedId) ?? null, [game.state, selectedId])
   const attackOptions = useMemo(() => {
     if (!selected || !targetMode) return []
@@ -94,7 +94,7 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     return game.state ? rangerAttackOptions(game.state, selected) : []
   }, [game.state, selected, targetMode])
   const attackPositions = useMemo(() => attackOptions.map((option) => option.position), [attackOptions])
-  const effective = useMemo(() => mergeCommandPlans(game.tick ?? 0, game.receipts, plan), [game.receipts, game.tick, plan])
+  const effective = useMemo(() => mergeCommandPlans(game.tick ?? 0, game.receipts, plan, game.submissionSource), [game.receipts, game.submissionSource, game.tick, plan])
   const actionAvailability = useMemo(() => game.state && selected ? getActionAvailability(game.state, selected, effective.plan) : null, [effective.plan, game.state, selected])
   const movementRoutes = useMemo(() => game.state ? buildMovementRoutes(game.state, game.explored, movementGoals, effective.plan) : [], [effective.plan, game.explored, game.state, movementGoals])
   const moveArrows = useMemo(() => game.state ? plannedMoveArrows(game.state, effective.plan, movementRoutes, effective) : [], [effective, game.state, movementRoutes])
@@ -124,12 +124,12 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     setCenterPosition(object.position)
     setCenterRequest((value) => value + 1)
   }
-  const setUnitAction = (id: string, action: UnitAction | null) => { const current = planRef.current; const unit_actions = { ...current.unit_actions }; if (action) unit_actions[id] = action; else delete unit_actions[id]; commitManualPlan({ ...current, unit_actions }) }
-  const setCoreAction = (action: CoreAction | null) => { const current = planRef.current; if (action) { commitManualPlan({ ...current, core_action: action }); return } const next = { ...current }; delete next.core_action; commitManualPlan(next) }
+  const setUnitAction = (id: string, action: UnitAction | null) => { const current = planRef.current; const unit_actions = { ...current.unit_actions }; if (action) unit_actions[id] = action; else delete unit_actions[id]; commitSubmittedPlan({ ...current, unit_actions }) }
+  const setCoreAction = (action: CoreAction | null) => { const current = planRef.current; if (action) { commitSubmittedPlan({ ...current, core_action: action }); return } const next = { ...current }; delete next.core_action; commitSubmittedPlan(next) }
   const unitAction = (id: string, action: UnitAction | null) => {
     removeMovementGoal(id)
     if (!game.state) return
-    commitManualPlan(prepareManualUnitActionPlan(game.state, game.receipts, planRef.current, id, action))
+    commitSubmittedPlan(prepareUnitActionPlan(game.state, game.receipts, planRef.current, game.submissionSource, id, action))
   }
   const coreAction = (action: CoreAction | null) => { const coreId = game.state?.objects.find((object) => object.kind === 'CORE' && object.controlled)?.id; if (coreId) removeMovementGoal(coreId); setCoreAction(action) }
   const chooseAttackPosition = (position: Position) => {
@@ -152,7 +152,7 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     const nextGoals = { ...movementGoalsRef.current, [selected.id]: target }
     const result = applyAutonomousMovement(game.state, game.explored, nextGoals, planRef.current)
     replaceMovementGoals(nextGoals); setMovementError(null); autoMovementTickRef.current = game.tick
-    if (result.changed) commitManualPlan(result.plan)
+    if (result.changed) commitSubmittedPlan(result.plan)
     select(null)
   }
   const cancelMovementGoal = (object: WorldObject) => { if (!object.id) return; removeMovementGoal(object.id); if (object.kind === 'CORE') setCoreAction(null); else setUnitAction(object.id, null); select(null) }
