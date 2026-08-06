@@ -100,6 +100,25 @@ describe('manual command API', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ operation: 'SET_HUMAN_FULL_VISION', enabled: true })
   })
 
+  it('adds a local participant and labels a Tick with CSRF', async () => {
+    setCSRF('local-csrf')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 7, operation: 'ADD_PARTICIPANT', participant: { id: 'player-1', username: 'late_agent', controller: 'AGENT', status: 'PENDING', token: 'local-token' }, record: {} }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, match_id: 'match-1', tick: 4, cleared: false, label: { match_id: 'match-1', tick: 4, label: 'First contact', updated_at: '2026-08-06T00:00:00Z' }, labels: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await api.addLocalParticipant('late_agent', 'AGENT')
+    await api.setLocalTickLabel('match-1', 4, 'First contact')
+
+    const [participantPath, participantInit] = fetchMock.mock.calls[0]
+    expect(participantPath).toBe('/api/local/god')
+    expect(new Headers(participantInit?.headers).get('X-CSRF-Token')).toBe('local-csrf')
+    expect(JSON.parse(participantInit?.body as string)).toEqual({ operation: 'ADD_PARTICIPANT', username: 'late_agent', controller: 'AGENT' })
+    const [labelPath, labelInit] = fetchMock.mock.calls[1]
+    expect(labelPath).toBe('/api/local/label')
+    expect(new Headers(labelInit?.headers).get('X-CSRF-Token')).toBe('local-csrf')
+    expect(JSON.parse(labelInit?.body as string)).toEqual({ match_id: 'match-1', tick: 4, label: 'First contact' })
+  })
+
   it('creates an API key without requiring a name', async () => {
     setCSRF('csrf-test')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'key-1', name: '', prefix: 'ah_live_example', key: 'ah_live_example-secret', created_at: '2026-07-15T00:00:00Z' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))

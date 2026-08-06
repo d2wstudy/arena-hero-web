@@ -14,6 +14,10 @@ const status = (ready: boolean, error?: string): LocalMatchStatus => ({
   root_match_id: 'root-match',
   bots: [{ username: 'bot', ready, ...(error ? { error } : {}) }],
   god: { human_full_vision: false },
+  participants: [
+    { id: 'human-1', username: 'commander', controller: 'HUMAN', status: 'ACTIVE' },
+    { id: 'bot-1', username: 'bot', controller: 'BOT', status: 'ACTIVE' },
+  ],
 })
 
 const history: LocalHistory = {
@@ -31,6 +35,7 @@ const history: LocalHistory = {
     latest_tick: 7,
     active: true,
   }],
+  labels: [{ match_id: 'root-match', tick: 4, label: 'First contact', updated_at: '2026-08-06T00:00:00Z' }],
 }
 
 const baseProps = {
@@ -48,6 +53,8 @@ const baseProps = {
   onBranch: vi.fn().mockResolvedValue(undefined),
   onGodView: vi.fn().mockResolvedValue(undefined),
   onHumanFullVision: vi.fn().mockResolvedValue(undefined),
+  onAddParticipant: vi.fn().mockResolvedValue(undefined),
+  onSetTickLabel: vi.fn().mockResolvedValue(undefined),
 }
 
 describe('LocalStepControl', () => {
@@ -100,6 +107,31 @@ describe('LocalStepControl', () => {
     expect(branch).toHaveBeenCalledOnce()
     await userEvent.click(screen.getByRole('button', { name: 'Return to live Tick 7' }))
     expect(returnLive).toHaveBeenCalledOnce()
+  })
+
+  it('saves labels and jumps directly to a labeled Tick', async () => {
+    const saveLabel = vi.fn().mockResolvedValue(undefined)
+    const showReplay = vi.fn().mockResolvedValue(undefined)
+    render(<LocalStepControl {...baseProps} status={status(true)} onSetTickLabel={saveLabel} onReplay={showReplay} />)
+
+    await userEvent.type(screen.getByRole('textbox', { name: 'Tick label' }), 'Before battle')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(saveLabel).toHaveBeenCalledWith('root-match', 7, 'Before battle')
+
+    await userEvent.click(screen.getByRole('button', { name: 'T4 · First contact' }))
+    expect(showReplay).toHaveBeenCalledWith('root-match', 4)
+  })
+
+  it('queues a new external Agent from the god console', async () => {
+    const addParticipant = vi.fn().mockResolvedValue(undefined)
+    render(<LocalStepControl {...baseProps} status={status(true)} onAddParticipant={addParticipant} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'God mode' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Participant username' }), 'late_agent')
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Participant controller' }), 'AGENT')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(addParticipant).toHaveBeenCalledWith('late_agent', 'AGENT')
   })
 
   it('opens the god console and keeps historical operations read-only', async () => {

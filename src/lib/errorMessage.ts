@@ -38,6 +38,8 @@ const ERROR_KEYS = {
   IDEMPOTENCY_CONFLICT: 'errors.commandConflict',
   PLAYER_NOT_READY: 'errors.playerNotReady',
   BOT_NOT_READY: 'errors.botNotReady',
+  BOT_TACTIC_UNAVAILABLE: 'errors.botTacticUnavailable',
+  PARTICIPANT_ALREADY_EXISTS: 'errors.participantAlreadyExists',
   LOCAL_STEP_MODE_DISABLED: 'errors.localStepDisabled',
   LOCAL_REPLAY_NOT_FOUND: 'errors.localReplayNotFound',
   LOCAL_MATCH_FAMILY_MISMATCH: 'errors.localMatchFamilyMismatch',

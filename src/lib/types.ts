@@ -115,6 +115,25 @@ export interface LocalBotStatus {
   error?: string
 }
 
+export type LocalParticipantController = 'HUMAN' | 'BOT' | 'AGENT'
+export type LocalParticipantStatus = 'PENDING' | 'ACTIVE' | 'RESPAWNING'
+
+export interface LocalParticipant {
+  id: string
+  username: string
+  controller: LocalParticipantController
+  status: LocalParticipantStatus
+  activation_tick?: number
+  token?: string
+}
+
+export interface LocalTickLabel {
+  match_id: string
+  tick: number
+  label: string
+  updated_at: string
+}
+
 export interface LocalMatchStatus {
   mode: LocalMatchMode
   tick: number
@@ -124,6 +143,8 @@ export interface LocalMatchStatus {
   match_id: string | null
   root_match_id?: string
   god: LocalGodSettings
+  participants: LocalParticipant[]
+  label?: LocalTickLabel
 }
 
 export interface LocalAdvanceReceipt {
@@ -148,6 +169,7 @@ export interface LocalHistory {
   active_match_id: string
   selected_match_id: string
   matches: LocalMatchSummary[]
+  labels: LocalTickLabel[]
 }
 
 export interface LocalExploredCell {
@@ -163,13 +185,14 @@ export interface LocalReplay {
   receipts: Partial<Record<CommandSource, ReceivedNotice>>
   explored: LocalExploredCell[]
   god: LocalGodSettings
+  label?: LocalTickLabel
 }
 
 export interface LocalGodSettings {
   human_full_vision: boolean
 }
 
-export interface LocalGodOperation {
+export interface LocalFullVisionOperation {
   seq: number
   match_id: string | null
   tick: number
@@ -177,6 +200,21 @@ export interface LocalGodOperation {
   operation: 'SET_HUMAN_FULL_VISION'
   payload: { enabled: boolean }
 }
+
+export interface LocalParticipantOperation {
+  seq: number
+  match_id: string | null
+  tick: number
+  applied_at: string
+  operation: 'ADD_PARTICIPANT'
+  payload: {
+    controller: 'AGENT' | 'BOT'
+    player_id: string
+    username: string
+  }
+}
+
+export type LocalGodOperation = LocalFullVisionOperation | LocalParticipantOperation
 
 export interface LocalGodPlayer {
   id: string
@@ -221,12 +259,14 @@ export interface LocalGodSnapshot {
   world_sha256: string
   settings: LocalGodSettings
   operations: LocalGodOperation[]
+  participants: LocalParticipant[]
   state: PlayerState
   players: LocalGodPlayer[]
   tracked_chunks: Position[]
   resource_cells: LocalGodResourceCell[]
   plans: LocalGodPlan[]
   explored: LocalExploredCell[]
+  label?: LocalTickLabel
 }
 
 export interface LocalGodOperationReceipt {
@@ -236,6 +276,23 @@ export interface LocalGodOperationReceipt {
   changed: boolean
   settings: LocalGodSettings
   record?: LocalGodOperation
+}
+
+export interface LocalParticipantAdmissionReceipt {
+  accepted: true
+  tick: number
+  operation: 'ADD_PARTICIPANT'
+  participant: LocalParticipant
+  record: LocalParticipantOperation
+}
+
+export interface LocalTickLabelReceipt {
+  accepted: true
+  match_id: string
+  tick: number
+  cleared: boolean
+  label: LocalTickLabel | null
+  labels: LocalTickLabel[]
 }
 
 export interface LocalBranchReceipt {

@@ -220,6 +220,37 @@ describe('useGameStream WebSocket transport', () => {
     unmount()
   })
 
+  it('updates local participants and Tick labels without waiting for another state', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const headers = { 'Content-Type': 'application/json' }
+      if (path === '/api/local/session') return Promise.resolve(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1', god_mode: true }), { status: 200, headers }))
+      if (path === '/api/local/match') return Promise.resolve(new Response(JSON.stringify({ mode: 'step', tick: 7, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }], participants: [{ id: 'human-1', username: 'commander', controller: 'HUMAN', status: 'ACTIVE' }], match_id: 'match-1', root_match_id: 'match-1', god: { human_full_vision: false } }), { status: 200, headers }))
+      if (path.startsWith('/api/local/history')) return Promise.resolve(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [{ id: 'match-1', label: 'demo', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z', root_match_id: 'match-1', parent_match_id: null, parent_tick: null, first_tick: 1, latest_tick: 7, active: true }], labels: [] }), { status: 200, headers }))
+      if (path.startsWith('/api/local/replay')) return Promise.resolve(new Response(JSON.stringify({ match_id: 'match-1', tick: 7, live: true, state: demoState, receipts: {}, explored: [], god: { human_full_vision: false } }), { status: 200, headers }))
+      if (path === '/api/local/god' && init?.method === 'POST') return Promise.resolve(new Response(JSON.stringify({ accepted: true, tick: 7, operation: 'ADD_PARTICIPANT', participant: { id: 'agent-1', username: 'late_agent', controller: 'AGENT', status: 'PENDING', activation_tick: 7, token: 'local-token' }, record: { seq: 1, match_id: 'match-1', tick: 7, applied_at: '2026-08-06T00:00:00Z', operation: 'ADD_PARTICIPANT', payload: { controller: 'AGENT', player_id: 'agent-1', username: 'late_agent' } } }), { status: 201, headers }))
+      if (path === '/api/local/label') return Promise.resolve(new Response(JSON.stringify({ accepted: true, match_id: 'match-1', tick: 7, cleared: false, label: { match_id: 'match-1', tick: 7, label: 'Before battle', updated_at: '2026-08-06T00:00:00Z' }, labels: [{ match_id: 'match-1', tick: 7, label: 'Before battle', updated_at: '2026-08-06T00:00:00Z' }] }), { status: 200, headers }))
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => {
+      socket.open()
+      socket.message({ type: 'tick', data: 7 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    await act(async () => { await result.current.addLocalParticipant('late_agent', 'AGENT') })
+    expect(result.current.localStatus?.participants.at(-1)?.status).toBe('PENDING')
+    await act(async () => { await result.current.setTickLabel('match-1', 7, 'Before battle') })
+    expect(result.current.localHistory?.labels).toHaveLength(1)
+    expect(result.current.localStatus?.label?.label).toBe('Before battle')
+    unmount()
+  })
+
   it('ignores a stale live god snapshot after selecting a historical Tick', async () => {
     let resolveLiveGod!: (response: Response) => void
     const liveGodResponse = new Promise<Response>((resolve) => { resolveLiveGod = resolve })

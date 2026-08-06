@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalReplay, LocalSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -48,6 +48,16 @@ export const api = {
     method: 'POST',
     headers: { 'X-CSRF-Token': getCSRF() },
     body: JSON.stringify({ operation: 'SET_HUMAN_FULL_VISION', enabled }),
+  }),
+  addLocalParticipant: (username: string, controller: 'AGENT' | 'BOT') => request<LocalParticipantAdmissionReceipt>('/api/local/god', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF() },
+    body: JSON.stringify({ operation: 'ADD_PARTICIPANT', username, controller }),
+  }),
+  setLocalTickLabel: (matchId: string, tick: number, label: string) => request<LocalTickLabelReceipt>('/api/local/label', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF() },
+    body: JSON.stringify({ match_id: matchId, tick, label }),
   }),
   advanceLocalTick: (tick: number) => request<LocalAdvanceReceipt>('/api/local/advance', {
     method: 'POST',

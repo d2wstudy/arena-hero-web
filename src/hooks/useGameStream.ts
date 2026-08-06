@@ -243,8 +243,12 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     replayRef.current = null
     setReplay(null)
     setError('')
+    const matchId = activeMatchIdRef.current
+    const contextRequest = ++localContextRequestRef.current
+    if (matchId) void api.localHistory(matchId).then((history) => {
+      if (contextRequest === localContextRequestRef.current && !replayRef.current) setLocalHistory(history)
+    }).catch((cause) => setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED'))
     if (godViewRef.current) {
-      const matchId = activeMatchIdRef.current
       const tick = tickRef.current
       const requestId = ++godRequestRef.current
       setGodSnapshot(null)
@@ -327,6 +331,60 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     }
   }, [localMatch])
 
+  const addLocalParticipant = useCallback(async (username: string, controller: 'AGENT' | 'BOT') => {
+    if (!localMatch || replayRef.current) throw new Error('local god operation unavailable')
+    setError('')
+    try {
+      const receipt = await api.addLocalParticipant(username, controller)
+      setLocalStatus((current) => current ? {
+        ...current,
+        participants: [...current.participants, receipt.participant],
+      } : current)
+      setGodSnapshot((current) => current?.live ? {
+        ...current,
+        participants: [...current.participants, receipt.participant],
+        operations: [...current.operations, receipt.record],
+      } : current)
+      return receipt
+    } catch (cause) {
+      setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    }
+  }, [localMatch])
+
+  const setTickLabel = useCallback(async (matchId: string, tick: number, label: string) => {
+    if (!localMatch) throw new Error('local labels unavailable')
+    setError('')
+    try {
+      const receipt = await api.setLocalTickLabel(matchId, tick, label)
+      setLocalHistory((current) => current?.selected_match_id === matchId ? {
+        ...current,
+        labels: receipt.labels,
+      } : current)
+      setLocalStatus((current) => current?.match_id === matchId && current.tick === tick ? {
+        ...current,
+        ...(receipt.label ? { label: receipt.label } : { label: undefined }),
+      } : current)
+      setReplay((current) => {
+        if (!current || current.match_id !== matchId || current.tick !== tick) return current
+        const next = {
+          ...current,
+          ...(receipt.label ? { label: receipt.label } : { label: undefined }),
+        }
+        replayRef.current = next
+        return next
+      })
+      setGodSnapshot((current) => current?.match_id === matchId && current.tick === tick ? {
+        ...current,
+        ...(receipt.label ? { label: receipt.label } : { label: undefined }),
+      } : current)
+      return receipt
+    } catch (cause) {
+      setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    }
+  }, [localMatch])
+
   const replayExplored = useMemo(() => replay
     ? new Map(replay.explored.map((cell) => [positionKey(cell.position), cell]))
     : null, [replay])
@@ -367,5 +425,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     branchFromReplay,
     setGodObservation,
     setHumanFullVision,
+    addLocalParticipant,
+    setTickLabel,
   }
 }

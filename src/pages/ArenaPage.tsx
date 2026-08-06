@@ -163,7 +163,7 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} />
     <section className="relative min-h-0 overflow-hidden">
       {!respawning && local && game.localSession?.mode === 'step' && game.tick && game.liveTick
-        ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} godView={game.godView} godSnapshot={game.godSnapshot} onAdvance={game.advance} onReplay={game.showReplay} onReturnLive={game.returnLive} onBranch={game.branchFromReplay} onGodView={game.setGodObservation} onHumanFullVision={game.setHumanFullVision} />
+        ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} godView={game.godView} godSnapshot={game.godSnapshot} onAdvance={game.advance} onReplay={game.showReplay} onReturnLive={game.returnLive} onBranch={game.branchFromReplay} onGodView={game.setGodObservation} onHumanFullVision={game.setHumanFullVision} onAddParticipant={game.addLocalParticipant} onSetTickLabel={game.setTickLabel} />
         : !respawning && <GameHUD phase={game.phase} stateReceivedAt={game.stateReceivedAt} />}
       {!respawning && <UpkeepWarning state={game.state} className="pointer-events-none absolute left-3 right-3 top-16 z-20 lg:hidden" />}
       {!respawning && !game.godView && game.tick && <PendingCommands tick={game.tick} state={game.state} receipts={game.receipts} belowUpkeepWarning={upkeepShortfall} />}
