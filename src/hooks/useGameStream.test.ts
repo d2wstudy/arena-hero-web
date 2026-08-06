@@ -120,8 +120,10 @@ describe('useGameStream WebSocket transport', () => {
 
   it('establishes a local session before opening the step-match socket', async () => {
     vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 42, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 42, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }], match_id: 'match-1', root_match_id: 'match-1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [{ id: 'match-1', label: 'demo', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z', root_match_id: 'match-1', parent_match_id: null, parent_tick: null, first_tick: 1, latest_tick: 42, active: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ match_id: 'match-1', tick: 42, live: true, state: demoState, receipts: {}, explored: [{ position: [0, 0], kind: 'EMPTY' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 
     const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
     expect(FakeWebSocket.instances).toHaveLength(0)
@@ -134,20 +136,67 @@ describe('useGameStream WebSocket transport', () => {
       socket.open()
       socket.message({ type: 'tick', data: 42 })
       socket.message({ type: 'state', data: demoState })
-      await Promise.resolve()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
     })
     expect(result.current.localStatus?.bots[0]).toEqual({ username: 'bot', ready: true })
+    expect(result.current.localHistory?.active_match_id).toBe('match-1')
+    expect(result.current.explored.get('0,0')?.kind).toBe('EMPTY')
+    unmount()
+  })
+
+  it('shows a read-only replay and switches to a newly created branch', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      const headers = { 'Content-Type': 'application/json' }
+      if (path === '/api/local/session') return Promise.resolve(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1' }), { status: 200, headers }))
+      if (path === '/api/local/match') return Promise.resolve(new Response(JSON.stringify({ mode: 'step', tick: 7, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }], match_id: 'match-1', root_match_id: 'match-1' }), { status: 200, headers }))
+      if (path.startsWith('/api/local/history')) return Promise.resolve(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [{ id: 'match-1', label: 'demo', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z', root_match_id: 'match-1', parent_match_id: null, parent_tick: null, first_tick: 1, latest_tick: 7, active: true }] }), { status: 200, headers }))
+      if (path.includes('/api/local/replay')) {
+        const tick = Number(new URL(path, 'http://localhost').searchParams.get('tick'))
+        return Promise.resolve(new Response(JSON.stringify({ match_id: 'match-1', tick, live: tick === 7, state: { ...demoState, resources: tick }, receipts: {}, explored: [{ position: [tick, 0], kind: 'EMPTY' }] }), { status: 200, headers }))
+      }
+      if (path === '/api/local/branch') return Promise.resolve(new Response(JSON.stringify({ accepted: true, match_id: 'branch-1', tick: 4, parent_match_id: 'match-1', parent_tick: 4 }), { status: 201, headers }))
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => {
+      socket.open()
+      socket.message({ type: 'tick', data: 7 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    await act(async () => { await result.current.showReplay('match-1', 4) })
+    expect(result.current.tick).toBe(4)
+    expect(result.current.liveTick).toBe(7)
+    expect(result.current.phase).toBe('replay')
+    expect(result.current.state?.resources).toBe(4)
+    expect(result.current.explored.has('4,0')).toBe(true)
+
+    await act(async () => { await result.current.branchFromReplay() })
+    expect(result.current.replay).toBeNull()
+    expect(result.current.localSession?.match_id).toBe('branch-1')
+    expect(result.current.phase).toBe('syncing')
     unmount()
   })
 
   it('does not let an old advance response overwrite the next Tick phase', async () => {
     let resolveAdvance!: (response: Response) => void
     const advanceResponse = new Promise<Response>((resolve) => { resolveAdvance = resolve })
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 42, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-      .mockReturnValueOnce(advanceResponse)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 43, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    let statusTick = 42
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      const headers = { 'Content-Type': 'application/json' }
+      if (path === '/api/local/session') return Promise.resolve(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1' }), { status: 200, headers }))
+      if (path === '/api/local/match') return Promise.resolve(new Response(JSON.stringify({ mode: 'step', tick: statusTick, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }], match_id: 'match-1', root_match_id: 'match-1' }), { status: 200, headers }))
+      if (path.startsWith('/api/local/history')) return Promise.resolve(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [{ id: 'match-1', label: 'demo', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z', root_match_id: 'match-1', parent_match_id: null, parent_tick: null, first_tick: 1, latest_tick: statusTick, active: true }] }), { status: 200, headers }))
+      if (path.startsWith('/api/local/replay')) return Promise.resolve(new Response(JSON.stringify({ match_id: 'match-1', tick: statusTick, live: true, state: demoState, receipts: {}, explored: [] }), { status: 200, headers }))
+      if (path === '/api/local/advance') return advanceResponse
+      throw new Error(`unexpected request: ${path}`)
+    })
 
     const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
@@ -165,8 +214,9 @@ describe('useGameStream WebSocket transport', () => {
 
     await act(async () => {
       socket.message({ type: 'tick', data: 43 })
+      statusTick = 43
       socket.message({ type: 'state', data: demoState })
-      await Promise.resolve()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
     })
     expect(result.current.phase).toBe('open')
 

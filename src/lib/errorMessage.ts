@@ -39,6 +39,8 @@ const ERROR_KEYS = {
   PLAYER_NOT_READY: 'errors.playerNotReady',
   BOT_NOT_READY: 'errors.botNotReady',
   LOCAL_STEP_MODE_DISABLED: 'errors.localStepDisabled',
+  LOCAL_REPLAY_NOT_FOUND: 'errors.localReplayNotFound',
+  LOCAL_MATCH_FAMILY_MISMATCH: 'errors.localMatchFamilyMismatch',
   STATE_INVALID: 'errors.stateInvalid',
   REQUEST_FAILED: 'errors.generic',
   INTERNAL_ERROR: 'errors.generic',

@@ -99,6 +99,7 @@ export interface LocalSession {
   csrf_token: string
   username: string
   mode: LocalMatchMode
+  match_id: string | null
 }
 
 export interface LocalBotStatus {
@@ -113,11 +114,54 @@ export interface LocalMatchStatus {
   phase: 'IDLE' | 'PREPARING' | 'OPEN' | 'RESOLVING' | 'STOPPED'
   human: string
   bots: LocalBotStatus[]
+  match_id: string | null
+  root_match_id?: string
 }
 
 export interface LocalAdvanceReceipt {
   accepted: true
   tick: number
+}
+
+export interface LocalMatchSummary {
+  id: string
+  label: string
+  created_at: string
+  updated_at: string
+  root_match_id: string
+  parent_match_id: string | null
+  parent_tick: number | null
+  first_tick: number
+  latest_tick: number
+  active: boolean
+}
+
+export interface LocalHistory {
+  active_match_id: string
+  selected_match_id: string
+  matches: LocalMatchSummary[]
+}
+
+export interface LocalExploredCell {
+  position: Position
+  kind: 'EMPTY' | 'OBSTACLE' | 'RESOURCE'
+}
+
+export interface LocalReplay {
+  match_id: string
+  tick: number
+  live: boolean
+  state: PlayerState
+  receipts: Partial<Record<CommandSource, ReceivedNotice>>
+  explored: LocalExploredCell[]
+}
+
+export interface LocalBranchReceipt {
+  accepted: true
+  match_id: string
+  tick: number
+  parent_match_id: string
+  parent_tick: number
 }
 
 export interface User {
@@ -177,4 +221,4 @@ export interface APIKeyView {
   key?: string
 }
 
-export type StreamPhase = 'connecting' | 'syncing' | 'open' | 'settling' | 'offline'
+export type StreamPhase = 'connecting' | 'syncing' | 'open' | 'settling' | 'offline' | 'replay'

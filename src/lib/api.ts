@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalMatchStatus, LocalSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalHistory, LocalMatchStatus, LocalReplay, LocalSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -39,10 +39,17 @@ export const api = {
     return session
   },
   localMatch: () => request<LocalMatchStatus>('/api/local/match'),
+  localHistory: (matchId?: string) => request<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`),
+  localReplay: (matchId: string, tick: number) => request<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`),
   advanceLocalTick: (tick: number) => request<LocalAdvanceReceipt>('/api/local/advance', {
     method: 'POST',
     headers: { 'X-CSRF-Token': getCSRF() },
     body: JSON.stringify({ tick }),
+  }),
+  branchLocalMatch: (matchId: string, tick: number) => request<LocalBranchReceipt>('/api/local/branch', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF() },
+    body: JSON.stringify({ match_id: matchId, tick }),
   }),
   authOptions: () => request<AuthOptions>('/api/v1/auth/options'),
   leaderboard: () => request<Leaderboard>('/api/v1/leaderboard'),

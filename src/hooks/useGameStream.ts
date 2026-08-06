@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, APIError, apiURL } from '../lib/api'
 import { demoReceipt, demoState } from '../lib/demo'
 import { isReceivedNotice, type CommandReceipts } from '../lib/commandPlans'
 import { loadExplored, rememberVisible, type ExploredCell } from '../lib/exploration'
-import type { CommandPlan, LocalMatchStatus, LocalSession, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
+import { positionKey } from '../lib/visibility'
+import type { CommandPlan, LocalHistory, LocalMatchStatus, LocalReplay, LocalSession, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
 
 type GameMessage =
   | { type: 'tick'; data: number }
@@ -26,16 +27,22 @@ function reconnectDelay(attempt: number) {
 }
 
 export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false) {
-  const [tick, setTick] = useState<number | null>(demo ? 10583 : null)
-  const [state, setState] = useState<PlayerState | null>(demo ? demoState : null)
+  const [liveTick, setLiveTick] = useState<number | null>(demo ? 10583 : null)
+  const [liveState, setLiveState] = useState<PlayerState | null>(demo ? demoState : null)
   const [phase, setPhase] = useState<StreamPhase>(demo ? 'open' : 'connecting')
   const [stateReceivedAt, setStateReceivedAt] = useState<number | null>(() => demo ? Date.now() : null)
-  const [receipts, setReceipts] = useState<CommandReceipts>({})
+  const [liveReceipts, setLiveReceipts] = useState<CommandReceipts>({})
   const [explored, setExplored] = useState<Map<string, ExploredCell>>(new Map())
   const [error, setError] = useState('')
   const [localSession, setLocalSession] = useState<LocalSession | null>(null)
   const [localStatus, setLocalStatus] = useState<LocalMatchStatus | null>(null)
-  const tickRef = useRef<number | null>(tick)
+  const [localHistory, setLocalHistory] = useState<LocalHistory | null>(null)
+  const [replay, setReplay] = useState<LocalReplay | null>(null)
+  const tickRef = useRef<number | null>(liveTick)
+  const activeMatchIdRef = useRef<string | null>(null)
+  const replayRef = useRef<LocalReplay | null>(null)
+  const replayRequestRef = useRef(0)
+  const localContextRequestRef = useRef(0)
   const mergeExplored = useCallback((cells: Map<string, ExploredCell>) => {
     setExplored((current) => {
       if (!current.size) return cells
@@ -47,10 +54,11 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
 
   useEffect(() => {
     setExplored(new Map())
+    if (localMatch) return
     void loadExplored(explorationNamespace).then(mergeExplored).catch(() => undefined)
-  }, [explorationNamespace, mergeExplored])
+  }, [explorationNamespace, localMatch, mergeExplored])
   useEffect(() => {
-    if (demo) { void rememberVisible(explorationNamespace, demoState).then(mergeExplored).catch(() => undefined); return }
+    if (demo) { setLiveState(demoState); void rememberVisible(explorationNamespace, demoState).then(mergeExplored).catch(() => undefined); return }
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let reconnectAttempt = 0
@@ -83,22 +91,39 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
           const message = JSON.parse(String(event.data)) as GameMessage
           if (message.type === 'tick') {
             if (!Number.isSafeInteger(message.data) || message.data < 0) throw new Error('invalid tick')
-            tickRef.current = message.data; setTick(message.data); setPhase('syncing'); setReceipts({}); setLocalStatus(null); setError('')
+            tickRef.current = message.data; setLiveTick(message.data); setPhase('syncing'); setLiveReceipts({}); setLocalStatus(null); setError('')
             return
           }
           if (message.type === 'state') {
             if (!message.data || typeof message.data !== 'object') throw new Error('invalid state')
-            setState(message.data); setStateReceivedAt(Date.now()); setPhase('open'); void rememberVisible(explorationNamespace, message.data).then(mergeExplored).catch(() => undefined)
+            setLiveState(message.data); setStateReceivedAt(Date.now()); setPhase('open')
             if (localMatch) {
-              void api.localMatch().then(setLocalStatus).catch((cause) => {
+              const stateTick = tickRef.current
+              const contextRequest = ++localContextRequestRef.current
+              void api.localMatch().then(async (status) => {
+                if (stopped || contextRequest !== localContextRequestRef.current) return
+                setLocalStatus(status)
+                const matchId = status.match_id ?? activeMatchIdRef.current
+                if (!matchId || stateTick === null) return
+                activeMatchIdRef.current = matchId
+                const [history, liveReplay] = await Promise.all([
+                  api.localHistory(matchId),
+                  api.localReplay(matchId, stateTick),
+                ])
+                if (stopped || contextRequest !== localContextRequestRef.current || activeMatchIdRef.current !== matchId || tickRef.current !== stateTick) return
+                setLocalHistory(history)
+                setExplored(new Map(liveReplay.explored.map((cell) => [positionKey(cell.position), cell])))
+              }).catch((cause) => {
                 setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
               })
+            } else {
+              void rememberVisible(explorationNamespace, message.data).then(mergeExplored).catch(() => undefined)
             }
             return
           }
           if (message.type === 'received') {
             if (!isReceivedNotice(message.data) || message.data.tick !== tickRef.current) throw new Error('invalid receipt')
-            setReceipts((current) => ({ ...current, [message.data.source]: message.data }))
+            setLiveReceipts((current) => ({ ...current, [message.data.source]: message.data }))
             return
           }
           throw new Error('unknown message')
@@ -126,6 +151,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     if (localMatch) {
       void api.startLocalSession().then((session) => {
         if (stopped) return
+        activeMatchIdRef.current = session.match_id
         setLocalSession(session)
         connect()
       }).catch((cause) => {
@@ -144,11 +170,12 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   }, [demo, explorationNamespace, localMatch, mergeExplored])
 
   const submit = useCallback(async (plan: CommandPlan) => {
+    if (replayRef.current) throw new Error('local replay is read-only')
     setError('')
     try {
       const receipt = demo ? { ...demoReceipt, tick: plan.tick, received_at: new Date().toISOString() } : await api.submitCommands(plan)
       if (demo) {
-        setReceipts((current) => ({
+        setLiveReceipts((current) => ({
           ...current,
           MANUAL: { tick: receipt.tick, source: 'MANUAL', received_at: receipt.received_at, plan },
         }))
@@ -166,7 +193,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
 
   const advance = useCallback(async () => {
     const currentTick = tickRef.current
-    if (!localMatch || currentTick === null) throw new Error('local Tick unavailable')
+    if (!localMatch || currentTick === null || replayRef.current) throw new Error('local Tick unavailable')
     setError('')
     setPhase('settling')
     try {
@@ -178,5 +205,81 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     }
   }, [localMatch])
 
-  return { tick, state, phase, stateReceivedAt, receipts, explored, error, submit, localSession, localStatus, advance }
+  const showReplay = useCallback(async (matchId: string, tick: number) => {
+    if (!localMatch) throw new Error('local replay unavailable')
+    const requestId = ++replayRequestRef.current
+    setError('')
+    try {
+      const [nextReplay, history] = await Promise.all([
+        api.localReplay(matchId, tick),
+        api.localHistory(matchId),
+      ])
+      if (requestId !== replayRequestRef.current) return nextReplay
+      replayRef.current = nextReplay
+      setReplay(nextReplay)
+      setLocalHistory(history)
+      return nextReplay
+    } catch (cause) {
+      if (requestId === replayRequestRef.current) setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    }
+  }, [localMatch])
+
+  const returnLive = useCallback(() => {
+    replayRequestRef.current += 1
+    replayRef.current = null
+    setReplay(null)
+    setError('')
+  }, [])
+
+  const branchFromReplay = useCallback(async () => {
+    const selected = replayRef.current
+    if (!localMatch || !selected) throw new Error('local replay unavailable')
+    localContextRequestRef.current += 1
+    setError('')
+    try {
+      const receipt = await api.branchLocalMatch(selected.match_id, selected.tick)
+      activeMatchIdRef.current = receipt.match_id
+      replayRequestRef.current += 1
+      replayRef.current = null
+      setReplay(null)
+      setLocalHistory(null)
+      setLocalStatus(null)
+      setLocalSession((current) => current ? { ...current, match_id: receipt.match_id } : current)
+      setExplored(new Map())
+      setPhase('syncing')
+      return receipt
+    } catch (cause) {
+      setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    }
+  }, [localMatch])
+
+  const replayExplored = useMemo(() => replay
+    ? new Map(replay.explored.map((cell) => [positionKey(cell.position), cell]))
+    : null, [replay])
+  const tick = replay?.tick ?? liveTick
+  const state = replay?.state ?? liveState
+  const receipts: CommandReceipts = replay?.receipts ?? liveReceipts
+  const displayedPhase: StreamPhase = replay ? 'replay' : phase
+
+  return {
+    tick,
+    liveTick,
+    state,
+    phase: displayedPhase,
+    stateReceivedAt: replay ? null : stateReceivedAt,
+    receipts,
+    explored: replayExplored ?? explored,
+    error,
+    submit,
+    localSession,
+    localStatus,
+    localHistory,
+    replay,
+    advance,
+    showReplay,
+    returnLive,
+    branchFromReplay,
+  }
 }

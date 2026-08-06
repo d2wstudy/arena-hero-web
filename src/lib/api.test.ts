@@ -52,7 +52,7 @@ describe('manual command API', () => {
 
   it('starts a local session and advances the requested Tick with CSRF', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 12 }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
 
     await api.startLocalSession()
@@ -63,6 +63,25 @@ describe('manual command API', () => {
     expect(path).toBe('/api/local/advance')
     expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('local-csrf')
     expect(JSON.parse(init?.body as string)).toEqual({ tick: 12 })
+  })
+
+  it('loads replay history and creates a CSRF-protected branch', async () => {
+    setCSRF('local-csrf')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ match_id: 'match-1', tick: 4, live: false, state: {}, receipts: {}, explored: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, match_id: 'branch-1', tick: 4, parent_match_id: 'match-1', parent_tick: 4 }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+
+    await api.localHistory('match-1')
+    await api.localReplay('match-1', 4)
+    await api.branchLocalMatch('match-1', 4)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/local/history?match_id=match-1')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/local/replay?match_id=match-1&tick=4')
+    const [path, init] = fetchMock.mock.calls[2]
+    expect(path).toBe('/api/local/branch')
+    expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('local-csrf')
+    expect(JSON.parse(init?.body as string)).toEqual({ match_id: 'match-1', tick: 4 })
   })
 
   it('creates an API key without requiring a name', async () => {
