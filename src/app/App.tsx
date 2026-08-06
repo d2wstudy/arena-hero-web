@@ -46,6 +46,7 @@ export default function App() {
     </Route>
     {import.meta.env.DEV && <>
       <Route path="/demo" element={<div className="cosmic-bg min-h-dvh pt-0"><ArenaPage demo /></div>} />
+      <Route path="/local" element={<div className="cosmic-bg min-h-dvh pt-0"><ArenaPage local /></div>} />
       <Route path="/tutorial-demo" element={<div className="cosmic-bg min-h-dvh pt-0"><TutorialPage preview /></div>} />
     </>}
     <Route element={<RequireAuth />}>

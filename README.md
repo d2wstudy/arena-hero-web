@@ -9,6 +9,8 @@ npm run dev
 
 Vite listens on `http://localhost:3000` and proxies HTTP and WebSocket `/api` traffic to `http://localhost:8080`. The real client uses the session cookie, CSRF token, `/api/v1/game/ws` realtime connection, and command endpoint. It reconnects with bounded exponential backoff, restores the authoritative state and current pending plans after disconnects, synchronizes Manual edits across tabs, and displays Agent/Manual plans in the arena. In development only, `/demo` opens a deterministic local arena without a backend.
 
+Development also exposes `/local` for the repository's step-controlled match service. Start `python -m arena_hero_lab.play` from the parent repository, then open `http://localhost:3000/local`. Manual plan edits are sent immediately, while the dedicated resolve button advances exactly one logical Tick after every local bot has prepared its private Agent plan.
+
 ```bash
 npm run test
 npm run lint

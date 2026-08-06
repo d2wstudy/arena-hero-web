@@ -46,6 +46,7 @@ describe('useGameStream WebSocket transport', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    localStorage.clear()
     FakeWebSocket.instances = []
     vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket)
   })
@@ -114,6 +115,66 @@ describe('useGameStream WebSocket transport', () => {
     expect(result.current.error).toBe('UNAUTHORIZED')
     act(() => vi.advanceTimersByTime(10_000))
     expect(FakeWebSocket.instances).toHaveLength(3)
+    unmount()
+  })
+
+  it('establishes a local session before opening the step-match socket', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 42, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    expect(FakeWebSocket.instances).toHaveLength(0)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(result.current.localSession?.mode).toBe('step')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => {
+      socket.open()
+      socket.message({ type: 'tick', data: 42 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve()
+    })
+    expect(result.current.localStatus?.bots[0]).toEqual({ username: 'bot', ready: true })
+    unmount()
+  })
+
+  it('does not let an old advance response overwrite the next Tick phase', async () => {
+    let resolveAdvance!: (response: Response) => void
+    const advanceResponse = new Promise<Response>((resolve) => { resolveAdvance = resolve })
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 42, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockReturnValueOnce(advanceResponse)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'step', tick: 43, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => {
+      socket.open()
+      socket.message({ type: 'tick', data: 42 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve()
+    })
+
+    let advancing!: Promise<unknown>
+    act(() => { advancing = result.current.advance() })
+    expect(result.current.phase).toBe('settling')
+
+    await act(async () => {
+      socket.message({ type: 'tick', data: 43 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve()
+    })
+    expect(result.current.phase).toBe('open')
+
+    await act(async () => {
+      resolveAdvance(new Response(JSON.stringify({ accepted: true, tick: 42 }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
+      await advancing
+    })
+    expect(result.current.phase).toBe('open')
     unmount()
   })
 })

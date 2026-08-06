@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AssetList } from '../components/game/AssetList'
 import { GameHUD } from '../components/game/GameHUD'
+import { LocalStepControl } from '../components/game/LocalStepControl'
 import { MapControls } from '../components/game/MapControls'
 import { PendingCommands } from '../components/game/PendingCommands'
 import { ResourceActivity } from '../components/game/ResourceActivity'
@@ -22,15 +23,15 @@ import { mergeCommandPlans, prepareManualUnitActionPlan } from '../lib/commandPl
 import type { CommandPlan, CoreAction, Position, UnitAction, WorldObject } from '../lib/types'
 import { positionKey } from '../lib/visibility'
 
-export function ArenaPage({ demo = false }: { demo?: boolean }) {
-  const { t } = useTranslation(); const { user } = useAuth(); const game = useGameStream(demo, demo ? 'demo' : user?.username ?? 'anonymous')
+export function ArenaPage({ demo = false, local = false }: { demo?: boolean; local?: boolean }) {
+  const { t } = useTranslation(); const { user } = useAuth(); const playerNamespace = demo ? 'demo' : local ? 'local' : user?.username ?? 'anonymous'; const game = useGameStream(demo, playerNamespace, local)
   const submitGamePlan = game.submit
-  const movementStorageKey = `arena-hero.movement-goals.${demo ? 'demo' : user?.username ?? 'anonymous'}`
+  const movementStorageKey = `arena-hero.movement-goals.${playerNamespace}`
   const [selectedId, setSelectedId] = useState<string | null>(null); const [targetMode, setTargetMode] = useState<'SHOOT' | 'SWEEP' | null>(null); const [moveSelecting, setMoveSelecting] = useState(false)
   const [movementError, setMovementError] = useState<PathFailure | null>(null)
   const [anchor, setAnchor] = useState<MapAnchor | null>(null)
-  const destroyerStorageKey = `arena-hero.core-destroyer.${demo ? 'demo' : user?.username ?? 'anonymous'}`
-  const selfDestructStorageKey = `arena-hero.core-self-destructed.${demo ? 'demo' : user?.username ?? 'anonymous'}`
+  const destroyerStorageKey = `arena-hero.core-destroyer.${playerNamespace}`
+  const selfDestructStorageKey = `arena-hero.core-self-destructed.${playerNamespace}`
   const [coreDestroyer, setCoreDestroyer] = useState<string | null>(() => sessionStorage.getItem(destroyerStorageKey))
   const [coreSelfDestructed, setCoreSelfDestructed] = useState(() => sessionStorage.getItem(selfDestructStorageKey) === 'true')
   const [centerRequest, setCenterRequest] = useState(0); const [zoomRequest, setZoomRequest] = useState(0)
@@ -159,7 +160,9 @@ export function ArenaPage({ demo = false }: { demo?: boolean }) {
   return <div className="grid h-dvh min-h-[560px] grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr]">
     <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} />
     <section className="relative min-h-0 overflow-hidden">
-      {!respawning && <GameHUD phase={game.phase} stateReceivedAt={game.stateReceivedAt} />}
+      {!respawning && local && game.localSession?.mode === 'step' && game.tick
+        ? <LocalStepControl tick={game.tick} phase={game.phase} status={game.localStatus} onAdvance={game.advance} />
+        : !respawning && <GameHUD phase={game.phase} stateReceivedAt={game.stateReceivedAt} />}
       {!respawning && <UpkeepWarning state={game.state} className="pointer-events-none absolute left-3 right-3 top-16 z-20 lg:hidden" />}
       {!respawning && game.tick && <PendingCommands tick={game.tick} state={game.state} receipts={game.receipts} belowUpkeepWarning={upkeepShortfall} />}
       <WorldCanvas state={game.state} explored={game.explored} selectedId={selectedId} targeting={targetMode !== null} destinationSelecting={moveSelecting} attackPositions={attackPositions} targetableIds={targetableIds} routeDestinations={routeDestinations} moveArrows={moveArrows} sweepMarkers={sweepMarkers} shotMarkers={shotMarkers} centerPosition={centerPosition} centerRequest={centerRequest} zoomRequest={zoomRequest} onSelect={select} onTarget={chooseTarget} onAttackPosition={chooseAttackPosition} onMoveDestination={chooseMoveDestination} onCenterBeacon={() => { setCenterPosition(game.state!.champion_beacon.position); setCenterRequest((value) => value + 1) }} onAnchorChange={setAnchor} />

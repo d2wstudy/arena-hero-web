@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalMatchStatus, LocalSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -33,6 +33,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  startLocalSession: async () => {
+    const session = await request<LocalSession>('/api/local/session', { method: 'POST' })
+    setCSRF(session.csrf_token)
+    return session
+  },
+  localMatch: () => request<LocalMatchStatus>('/api/local/match'),
+  advanceLocalTick: (tick: number) => request<LocalAdvanceReceipt>('/api/local/advance', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF() },
+    body: JSON.stringify({ tick }),
+  }),
   authOptions: () => request<AuthOptions>('/api/v1/auth/options'),
   leaderboard: () => request<Leaderboard>('/api/v1/leaderboard'),
   me: () => request<User>('/api/v1/me'),

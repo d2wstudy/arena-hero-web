@@ -50,6 +50,21 @@ describe('manual command API', () => {
     expect(JSON.parse(init?.body as string)).toEqual(plan)
   })
 
+  it('starts a local session and advances the requested Tick with CSRF', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 12 }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
+
+    await api.startLocalSession()
+    await api.advanceLocalTick(12)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/local/session')
+    const [path, init] = fetchMock.mock.calls[1]
+    expect(path).toBe('/api/local/advance')
+    expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('local-csrf')
+    expect(JSON.parse(init?.body as string)).toEqual({ tick: 12 })
+  })
+
   it('creates an API key without requiring a name', async () => {
     setCSRF('csrf-test')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'key-1', name: '', prefix: 'ah_live_example', key: 'ah_live_example-secret', created_at: '2026-07-15T00:00:00Z' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))

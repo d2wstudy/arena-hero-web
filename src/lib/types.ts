@@ -93,6 +93,33 @@ export interface Receipt extends ReceiptMetadata {
   accepted: true
 }
 
+export type LocalMatchMode = 'step' | 'timed'
+
+export interface LocalSession {
+  csrf_token: string
+  username: string
+  mode: LocalMatchMode
+}
+
+export interface LocalBotStatus {
+  username: string
+  ready: boolean
+  error?: string
+}
+
+export interface LocalMatchStatus {
+  mode: LocalMatchMode
+  tick: number
+  phase: 'IDLE' | 'PREPARING' | 'OPEN' | 'RESOLVING' | 'STOPPED'
+  human: string
+  bots: LocalBotStatus[]
+}
+
+export interface LocalAdvanceReceipt {
+  accepted: true
+  tick: number
+}
+
 export interface User {
   email: string
   username: string

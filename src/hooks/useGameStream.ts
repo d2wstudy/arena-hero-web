@@ -3,7 +3,7 @@ import { api, APIError, apiURL } from '../lib/api'
 import { demoReceipt, demoState } from '../lib/demo'
 import { isReceivedNotice, type CommandReceipts } from '../lib/commandPlans'
 import { loadExplored, rememberVisible, type ExploredCell } from '../lib/exploration'
-import type { CommandPlan, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
+import type { CommandPlan, LocalMatchStatus, LocalSession, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
 
 type GameMessage =
   | { type: 'tick'; data: number }
@@ -25,7 +25,7 @@ function reconnectDelay(attempt: number) {
   return Math.round(bounded * (0.8 + Math.random() * 0.4))
 }
 
-export function useGameStream(demo = false, explorationNamespace = 'anonymous') {
+export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false) {
   const [tick, setTick] = useState<number | null>(demo ? 10583 : null)
   const [state, setState] = useState<PlayerState | null>(demo ? demoState : null)
   const [phase, setPhase] = useState<StreamPhase>(demo ? 'open' : 'connecting')
@@ -33,6 +33,8 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous') 
   const [receipts, setReceipts] = useState<CommandReceipts>({})
   const [explored, setExplored] = useState<Map<string, ExploredCell>>(new Map())
   const [error, setError] = useState('')
+  const [localSession, setLocalSession] = useState<LocalSession | null>(null)
+  const [localStatus, setLocalStatus] = useState<LocalMatchStatus | null>(null)
   const tickRef = useRef<number | null>(tick)
   const mergeExplored = useCallback((cells: Map<string, ExploredCell>) => {
     setExplored((current) => {
@@ -81,12 +83,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous') 
           const message = JSON.parse(String(event.data)) as GameMessage
           if (message.type === 'tick') {
             if (!Number.isSafeInteger(message.data) || message.data < 0) throw new Error('invalid tick')
-            tickRef.current = message.data; setTick(message.data); setPhase('syncing'); setReceipts({}); setError('')
+            tickRef.current = message.data; setTick(message.data); setPhase('syncing'); setReceipts({}); setLocalStatus(null); setError('')
             return
           }
           if (message.type === 'state') {
             if (!message.data || typeof message.data !== 'object') throw new Error('invalid state')
             setState(message.data); setStateReceivedAt(Date.now()); setPhase('open'); void rememberVisible(explorationNamespace, message.data).then(mergeExplored).catch(() => undefined)
+            if (localMatch) {
+              void api.localMatch().then(setLocalStatus).catch((cause) => {
+                setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+              })
+            }
             return
           }
           if (message.type === 'received') {
@@ -116,13 +123,25 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous') 
       }
     }
 
-    connect()
+    if (localMatch) {
+      void api.startLocalSession().then((session) => {
+        if (stopped) return
+        setLocalSession(session)
+        connect()
+      }).catch((cause) => {
+        if (stopped) return
+        setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+        setPhase('offline')
+      })
+    } else {
+      connect()
+    }
     return () => {
       stopped = true
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       if (socket) socket.close(1000, 'component unmounted')
     }
-  }, [demo, explorationNamespace, mergeExplored])
+  }, [demo, explorationNamespace, localMatch, mergeExplored])
 
   const submit = useCallback(async (plan: CommandPlan) => {
     setError('')
@@ -145,5 +164,19 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous') 
     }
   }, [demo])
 
-  return { tick, state, phase, stateReceivedAt, receipts, explored, error, submit }
+  const advance = useCallback(async () => {
+    const currentTick = tickRef.current
+    if (!localMatch || currentTick === null) throw new Error('local Tick unavailable')
+    setError('')
+    setPhase('settling')
+    try {
+      return await api.advanceLocalTick(currentTick)
+    } catch (cause) {
+      setPhase((current) => current === 'settling' ? 'open' : current)
+      setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    }
+  }, [localMatch])
+
+  return { tick, state, phase, stateReceivedAt, receipts, explored, error, submit, localSession, localStatus, advance }
 }
