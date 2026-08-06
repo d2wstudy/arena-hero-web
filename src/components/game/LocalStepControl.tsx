@@ -1,7 +1,8 @@
-import { Bot, ChevronLeft, ChevronRight, CircleCheck, CircleX, GitBranch, History, LoaderCircle, Play, Radio, RotateCcw } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, CircleCheck, CircleX, Crown, GitBranch, History, LoaderCircle, Play, Radio, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { LocalHistory, LocalMatchStatus, LocalReplay, StreamPhase } from '../../lib/types'
+import type { LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalReplay, StreamPhase } from '../../lib/types'
+import { GodModeConsole } from './GodModeConsole'
 
 export function LocalStepControl({
   tick,
@@ -10,10 +11,14 @@ export function LocalStepControl({
   status,
   history,
   replay,
+  godView,
+  godSnapshot,
   onAdvance,
   onReplay,
   onReturnLive,
   onBranch,
+  onGodView,
+  onHumanFullVision,
 }: {
   tick: number
   liveTick: number
@@ -21,10 +26,14 @@ export function LocalStepControl({
   status: LocalMatchStatus | null
   history: LocalHistory | null
   replay: LocalReplay | null
+  godView: boolean
+  godSnapshot: LocalGodSnapshot | null
   onAdvance: () => Promise<unknown>
   onReplay: (matchId: string, tick: number) => Promise<unknown>
   onReturnLive: () => void
   onBranch: () => Promise<unknown>
+  onGodView: (enabled: boolean) => Promise<unknown>
+  onHumanFullVision: (enabled: boolean) => Promise<unknown>
 }) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState<'advance' | 'replay' | 'branch' | null>(null)
@@ -40,6 +49,7 @@ export function LocalStepControl({
   const latestTick = selectedMatch?.latest_tick ?? liveTick
   const canStepBack = tick > firstTick
   const canStepForward = tick < latestTick
+  const humanFullVision = replay?.god?.human_full_vision ?? status?.god?.human_full_vision ?? godSnapshot?.settings.human_full_vision ?? false
 
   const advance = async () => {
     if (resolvingDisabled) return
@@ -86,12 +96,14 @@ export function LocalStepControl({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="flex items-center gap-2 font-mono text-[9px] tracking-[.16em] text-cyan-signal">
-            {replay ? <History size={12} /> : <Radio size={12} />}
-            {replay ? t('game.replayMode') : t('game.localStep')} · TICK {tick}
+            {godView ? <Crown size={12} className="text-amber-200" /> : replay ? <History size={12} /> : <Radio size={12} />}
+            {godView ? t(replay ? 'game.godReplayMode' : 'game.godLiveMode') : replay ? t('game.replayMode') : t('game.localStep')} · TICK {tick}
           </p>
-          <p className="mt-1 text-xs text-zinc-400">{replay ? t('game.replayHint') : t('game.localStepHint')}</p>
+          <p className="mt-1 text-xs text-zinc-400">{godView ? t('game.godViewHint') : replay ? t('game.replayHint') : t('game.localStepHint')}</p>
         </div>
-        {replay ? <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          <GodModeConsole godView={godView} snapshot={godSnapshot} humanFullVision={humanFullVision} replaying={Boolean(replay)} disabled={busy !== null} onGodView={onGodView} onHumanFullVision={onHumanFullVision} />
+          {replay ? <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onReturnLive} disabled={busy !== null} className="secondary-button flex min-h-11 items-center gap-2 px-3 text-xs">
             <RotateCcw size={14} />{t('game.returnLive', { tick: liveTick })}
           </button>
@@ -108,6 +120,7 @@ export function LocalStepControl({
           {busy === 'advance' || phase === 'settling' ? <LoaderCircle size={15} className="animate-spin" /> : <Play size={15} />}
           {phase === 'settling' ? t('game.settling') : t('game.resolveTick', { tick: liveTick })}
         </button>}
+        </div>
       </div>
 
       {history && selectedMatch && <div className="mt-3 grid gap-2 border-t border-white/[.07] pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">

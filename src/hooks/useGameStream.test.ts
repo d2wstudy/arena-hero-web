@@ -183,6 +183,92 @@ describe('useGameStream WebSocket transport', () => {
     unmount()
   })
 
+  it('switches live and historical views to complete god snapshots', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const headers = { 'Content-Type': 'application/json' }
+      if (path === '/api/local/session') return Promise.resolve(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1', god_mode: true }), { status: 200, headers }))
+      if (path === '/api/local/match') return Promise.resolve(new Response(JSON.stringify({ mode: 'step', tick: 7, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }], match_id: 'match-1', root_match_id: 'match-1', god: { human_full_vision: false } }), { status: 200, headers }))
+      if (path.startsWith('/api/local/history')) return Promise.resolve(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [{ id: 'match-1', label: 'demo', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z', root_match_id: 'match-1', parent_match_id: null, parent_tick: null, first_tick: 1, latest_tick: 7, active: true }] }), { status: 200, headers }))
+      if (path.startsWith('/api/local/replay')) return Promise.resolve(new Response(JSON.stringify({ match_id: 'match-1', tick: 7, live: true, state: demoState, receipts: {}, explored: [], god: { human_full_vision: false } }), { status: 200, headers }))
+      if (path.startsWith('/api/local/god') && init?.method === 'POST') return Promise.resolve(new Response(JSON.stringify({ accepted: true, tick: 7, operation: 'SET_HUMAN_FULL_VISION', changed: true, settings: { human_full_vision: true }, record: { seq: 1, match_id: 'match-1', tick: 7, applied_at: '2026-08-06T00:00:00Z', operation: 'SET_HUMAN_FULL_VISION', payload: { enabled: true } } }), { status: 200, headers }))
+      if (path.startsWith('/api/local/god')) return Promise.resolve(new Response(JSON.stringify({ match_id: 'match-1', tick: 7, live: true, contract: { api: 'v0.1', rules: 'v0.13', generator: 'local', resources: 'local', spawn: 'local' }, world_sha256: 'a'.repeat(64), settings: { human_full_vision: false }, operations: [], state: { ...demoState, view_mode: 'GOD', resources: 99 }, players: [], tracked_chunks: [[0, 0]], resource_cells: [], plans: [], explored: [{ position: [20, 20], kind: 'EMPTY' }] }), { status: 200, headers }))
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => {
+      socket.open()
+      socket.message({ type: 'tick', data: 7 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    await act(async () => { await result.current.setGodObservation(true) })
+    expect(result.current.godView).toBe(true)
+    expect(result.current.readOnly).toBe(true)
+    expect(result.current.state?.view_mode).toBe('GOD')
+    expect(result.current.state?.resources).toBe(99)
+    expect(result.current.explored.has('20,20')).toBe(true)
+    await expect(result.current.submit({ tick: 7, unit_actions: {} })).rejects.toThrow('god observation is read-only')
+
+    await act(async () => { await result.current.setHumanFullVision(true) })
+    expect(result.current.localStatus?.god.human_full_vision).toBe(true)
+    expect(result.current.godSnapshot?.operations).toHaveLength(1)
+    unmount()
+  })
+
+  it('ignores a stale live god snapshot after selecting a historical Tick', async () => {
+    let resolveLiveGod!: (response: Response) => void
+    const liveGodResponse = new Promise<Response>((resolve) => { resolveLiveGod = resolve })
+    const godSnapshot = (tick: number) => ({
+      match_id: 'match-1', tick, live: tick === 7,
+      contract: { api: 'v0.1', rules: 'v0.13', generator: 'local', resources: 'local', spawn: 'local' },
+      world_sha256: String(tick).repeat(64), settings: { human_full_vision: false }, operations: [],
+      state: { ...demoState, view_mode: 'GOD', resources: tick }, players: [], tracked_chunks: [[0, 0]], resource_cells: [], plans: [], explored: [],
+    })
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      const headers = { 'Content-Type': 'application/json' }
+      if (path === '/api/local/session') return Promise.resolve(new Response(JSON.stringify({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1', god_mode: true }), { status: 200, headers }))
+      if (path === '/api/local/match') return Promise.resolve(new Response(JSON.stringify({ mode: 'step', tick: 7, phase: 'OPEN', human: 'commander', bots: [{ username: 'bot', ready: true }], match_id: 'match-1', root_match_id: 'match-1', god: { human_full_vision: false } }), { status: 200, headers }))
+      if (path.startsWith('/api/local/history')) return Promise.resolve(new Response(JSON.stringify({ active_match_id: 'match-1', selected_match_id: 'match-1', matches: [{ id: 'match-1', label: 'demo', created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z', root_match_id: 'match-1', parent_match_id: null, parent_tick: null, first_tick: 1, latest_tick: 7, active: true }] }), { status: 200, headers }))
+      if (path.startsWith('/api/local/replay')) {
+        const tick = Number(new URL(path, 'http://localhost').searchParams.get('tick'))
+        return Promise.resolve(new Response(JSON.stringify({ match_id: 'match-1', tick, live: tick === 7, state: { ...demoState, resources: tick }, receipts: {}, explored: [], god: { human_full_vision: false } }), { status: 200, headers }))
+      }
+      if (path === '/api/local/god?match_id=match-1&tick=7') return liveGodResponse
+      if (path === '/api/local/god?match_id=match-1&tick=4') return Promise.resolve(new Response(JSON.stringify(godSnapshot(4)), { status: 200, headers }))
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => {
+      socket.open()
+      socket.message({ type: 'tick', data: 7 })
+      socket.message({ type: 'state', data: demoState })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    let enablingGod!: Promise<unknown>
+    act(() => { enablingGod = result.current.setGodObservation(true) })
+    await act(async () => { await result.current.showReplay('match-1', 4) })
+    expect(result.current.godSnapshot?.tick).toBe(4)
+    expect(result.current.state?.resources).toBe(4)
+
+    await act(async () => {
+      resolveLiveGod(new Response(JSON.stringify(godSnapshot(7)), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      await enablingGod
+    })
+    expect(result.current.godSnapshot?.tick).toBe(4)
+    expect(result.current.state?.resources).toBe(4)
+    unmount()
+  })
+
   it('does not let an old advance response overwrite the next Tick phase', async () => {
     let resolveAdvance!: (response: Response) => void
     const advanceResponse = new Promise<Response>((resolve) => { resolveAdvance = resolve })

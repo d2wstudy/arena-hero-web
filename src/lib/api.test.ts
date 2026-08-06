@@ -84,6 +84,22 @@ describe('manual command API', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ match_id: 'match-1', tick: 4 })
   })
 
+  it('loads a global snapshot and applies a CSRF-protected god operation', async () => {
+    setCSRF('local-csrf')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ match_id: 'match-1', tick: 4, live: false, state: {}, players: [], tracked_chunks: [], resource_cells: [], plans: [], explored: [], operations: [], settings: { human_full_vision: false }, contract: {}, world_sha256: 'a'.repeat(64) }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true, tick: 7, operation: 'SET_HUMAN_FULL_VISION', changed: true, settings: { human_full_vision: true } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await api.localGod('match-1', 4)
+    await api.setHumanFullVision(true)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/local/god?match_id=match-1&tick=4')
+    const [path, init] = fetchMock.mock.calls[1]
+    expect(path).toBe('/api/local/god')
+    expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('local-csrf')
+    expect(JSON.parse(init?.body as string)).toEqual({ operation: 'SET_HUMAN_FULL_VISION', enabled: true })
+  })
+
   it('creates an API key without requiring a name', async () => {
     setCSRF('csrf-test')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'key-1', name: '', prefix: 'ah_live_example', key: 'ah_live_example-secret', created_at: '2026-07-15T00:00:00Z' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))

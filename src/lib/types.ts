@@ -10,6 +10,7 @@ export interface WorldObject {
   positions?: Position[]
   id?: string
   controlled?: boolean
+  owner_id?: string
   owner_username?: string
   position?: Position
   hp?: number
@@ -21,6 +22,8 @@ export interface WorldObject {
   destination?: Position
   unit_type?: UnitType
   cargo?: number
+  resources?: number
+  population?: number
 }
 
 export interface GameEvent {
@@ -33,11 +36,13 @@ export interface GameEvent {
   position?: Position
   values?: Record<string, unknown> & {
     amount?: number
-  available?: number
-  destroyed?: number
-  capacity?: number
+    available?: number
+    destroyed?: number
+    capacity?: number
     source?: HarvestSource
   }
+  player_id?: string
+  player_username?: string
 }
 
 export interface ChampionBeaconView {
@@ -47,6 +52,7 @@ export interface ChampionBeaconView {
 }
 
 export interface PlayerState {
+  view_mode?: 'FULL' | 'GOD'
   status: 'ACTIVE' | 'RESPAWNING'
   respawn_at_tick?: number
   resources: number
@@ -100,6 +106,7 @@ export interface LocalSession {
   username: string
   mode: LocalMatchMode
   match_id: string | null
+  god_mode: boolean
 }
 
 export interface LocalBotStatus {
@@ -116,6 +123,7 @@ export interface LocalMatchStatus {
   bots: LocalBotStatus[]
   match_id: string | null
   root_match_id?: string
+  god: LocalGodSettings
 }
 
 export interface LocalAdvanceReceipt {
@@ -154,6 +162,80 @@ export interface LocalReplay {
   state: PlayerState
   receipts: Partial<Record<CommandSource, ReceivedNotice>>
   explored: LocalExploredCell[]
+  god: LocalGodSettings
+}
+
+export interface LocalGodSettings {
+  human_full_vision: boolean
+}
+
+export interface LocalGodOperation {
+  seq: number
+  match_id: string | null
+  tick: number
+  applied_at: string
+  operation: 'SET_HUMAN_FULL_VISION'
+  payload: { enabled: boolean }
+}
+
+export interface LocalGodPlayer {
+  id: string
+  username: string
+  status: 'ACTIVE' | 'RESPAWNING'
+  respawn_at_tick?: number | null
+  resources: number
+  population: number
+  population_tier: number
+  upkeep_next_tick: number
+  core_id: string | null
+  unit_ids: string[]
+  events: GameEvent[]
+  stats: Record<string, number>
+}
+
+export interface LocalGodPlan {
+  player_id: string
+  player_username: string
+  source: CommandSource
+  received_at?: string
+  plan: CommandPlan
+}
+
+export interface LocalGodResourceCell {
+  position: Position
+  source: 'NATURAL' | 'DROPPED_CARGO'
+  amount?: number
+}
+
+export interface LocalGodSnapshot {
+  match_id: string | null
+  tick: number
+  live: boolean
+  contract: {
+    api: string
+    rules: string
+    generator: string
+    resources: string
+    spawn: string
+  }
+  world_sha256: string
+  settings: LocalGodSettings
+  operations: LocalGodOperation[]
+  state: PlayerState
+  players: LocalGodPlayer[]
+  tracked_chunks: Position[]
+  resource_cells: LocalGodResourceCell[]
+  plans: LocalGodPlan[]
+  explored: LocalExploredCell[]
+}
+
+export interface LocalGodOperationReceipt {
+  accepted: true
+  tick: number
+  operation: 'SET_HUMAN_FULL_VISION'
+  changed: boolean
+  settings: LocalGodSettings
+  record?: LocalGodOperation
 }
 
 export interface LocalBranchReceipt {

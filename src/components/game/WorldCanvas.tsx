@@ -113,7 +113,10 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
   const pendingCameraRef = useRef<Camera | null>(null)
   const cameraRef = useRef(camera)
   const centeredCoreId = useRef<string | null>(null); const previousCenterRequest = useRef(centerRequest)
-  const visible = useMemo(() => computeVisibility(state), [state])
+  const visible = useMemo(
+    () => state.view_mode ? new Set(explored.keys()) : computeVisibility(state),
+    [explored, state],
+  )
   const entities = useMemo(() => state.objects.filter((object) => object.position), [state])
   const entityGroupsByPosition = useMemo(() => groupEntitiesByPosition(state.objects), [state.objects])
   const visibleObstacleCells = useMemo(() => collectTerrainObjectPositions(state.objects, 'OBSTACLE'), [state.objects])

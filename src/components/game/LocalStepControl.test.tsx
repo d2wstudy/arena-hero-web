@@ -13,6 +13,7 @@ const status = (ready: boolean, error?: string): LocalMatchStatus => ({
   match_id: 'root-match',
   root_match_id: 'root-match',
   bots: [{ username: 'bot', ready, ...(error ? { error } : {}) }],
+  god: { human_full_vision: false },
 })
 
 const history: LocalHistory = {
@@ -39,10 +40,14 @@ const baseProps = {
   status: status(false),
   history,
   replay: null,
+  godView: false,
+  godSnapshot: null,
   onAdvance: vi.fn().mockResolvedValue(undefined),
   onReplay: vi.fn().mockResolvedValue(undefined),
   onReturnLive: vi.fn(),
   onBranch: vi.fn().mockResolvedValue(undefined),
+  onGodView: vi.fn().mockResolvedValue(undefined),
+  onHumanFullVision: vi.fn().mockResolvedValue(undefined),
 }
 
 describe('LocalStepControl', () => {
@@ -74,6 +79,7 @@ describe('LocalStepControl', () => {
       },
       receipts: {},
       explored: [],
+      god: { human_full_vision: false },
     }
     const showReplay = vi.fn().mockResolvedValue(undefined)
     const branch = vi.fn().mockResolvedValue(undefined)
@@ -94,5 +100,24 @@ describe('LocalStepControl', () => {
     expect(branch).toHaveBeenCalledOnce()
     await userEvent.click(screen.getByRole('button', { name: 'Return to live Tick 7' }))
     expect(returnLive).toHaveBeenCalledOnce()
+  })
+
+  it('opens the god console and keeps historical operations read-only', async () => {
+    const setGodView = vi.fn().mockResolvedValue(undefined)
+    const setHumanFullVision = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onGodView={setGodView} onHumanFullVision={setHumanFullVision} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'God mode' }))
+    await userEvent.click(screen.getByRole('switch', { name: 'Global observation' }))
+    expect(setGodView).toHaveBeenCalledWith(true)
+    await userEvent.click(screen.getByRole('switch', { name: 'Human full vision' }))
+    expect(setHumanFullVision).toHaveBeenCalledWith(true)
+
+    rerender(<LocalStepControl {...baseProps} status={status(true)} replay={{
+      match_id: 'root-match', tick: 4, live: false,
+      state: { status: 'ACTIVE', resources: 0, population: 0, population_tier: 0, upkeep_next_tick: 0, champion_beacon: { position: [0, 0] }, objects: [], events: [] },
+      receipts: {}, explored: [], god: { human_full_vision: true },
+    }} onGodView={setGodView} onHumanFullVision={setHumanFullVision} />)
+    expect(screen.getByRole('switch', { name: 'Human full vision' })).toBeDisabled()
   })
 })

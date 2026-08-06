@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalHistory, LocalMatchStatus, LocalReplay, LocalSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalReplay, LocalSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -41,6 +41,14 @@ export const api = {
   localMatch: () => request<LocalMatchStatus>('/api/local/match'),
   localHistory: (matchId?: string) => request<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`),
   localReplay: (matchId: string, tick: number) => request<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`),
+  localGod: (matchId?: string | null, tick?: number | null) => request<LocalGodSnapshot>(matchId && tick !== null && tick !== undefined
+    ? `/api/local/god?match_id=${encodeURIComponent(matchId)}&tick=${tick}`
+    : '/api/local/god'),
+  setHumanFullVision: (enabled: boolean) => request<LocalGodOperationReceipt>('/api/local/god', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF() },
+    body: JSON.stringify({ operation: 'SET_HUMAN_FULL_VISION', enabled }),
+  }),
   advanceLocalTick: (tick: number) => request<LocalAdvanceReceipt>('/api/local/advance', {
     method: 'POST',
     headers: { 'X-CSRF-Token': getCSRF() },

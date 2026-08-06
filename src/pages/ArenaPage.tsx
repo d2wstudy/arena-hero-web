@@ -40,6 +40,7 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
   const [movementGoals, setMovementGoals] = useState<MovementGoals>(() => readMovementGoals(localStorage.getItem(movementStorageKey)))
   const planRef = useRef(plan); const tickRef = useRef(game.tick); const submitQueueRef = useRef<Promise<void>>(Promise.resolve()); const movementGoalsRef = useRef(movementGoals); const autoMovementTickRef = useRef<number | null>(null)
   const respawning = game.state?.status === 'RESPAWNING'
+  const readOnly = game.readOnly
   const upkeepShortfall = Boolean(game.state && game.state.upkeep_next_tick > game.state.resources)
   const replaceMovementGoals = useCallback((next: MovementGoals) => { movementGoalsRef.current = next; setMovementGoals(next) }, [])
   const removeMovementGoal = useCallback((objectId: string) => {
@@ -55,6 +56,7 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     setPlan(authoritative.plan)
   }, [game.receipts.MANUAL, game.tick])
   useEffect(() => { if (respawning) { setSelectedId(null); setTargetMode(null); setMoveSelecting(false); setMovementError(null); setAnchor(null); if (Object.keys(movementGoalsRef.current).length) replaceMovementGoals({}) } }, [replaceMovementGoals, respawning])
+  useEffect(() => { if (readOnly) { setTargetMode(null); setMoveSelecting(false); setMovementError(null); setAnchor(null) } }, [readOnly])
   useEffect(() => {
     if (!game.state) return
     if (!respawning) {
@@ -79,14 +81,14 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     })
   }, [submitGamePlan])
   useEffect(() => {
-    if (!game.tick || !game.state || game.phase !== 'open' || respawning || autoMovementTickRef.current === game.tick) return
+    if (!game.tick || !game.state || game.phase !== 'open' || respawning || readOnly || autoMovementTickRef.current === game.tick) return
     autoMovementTickRef.current = game.tick
     const currentPlan = planRef.current.tick === game.tick ? planRef.current : { tick: game.tick, unit_actions: {} }
     const result = applyAutonomousMovement(game.state, game.explored, movementGoalsRef.current, currentPlan)
     const stale = new Set([...result.completed, ...result.removed])
     if (stale.size) replaceMovementGoals(Object.fromEntries(Object.entries(movementGoalsRef.current).filter(([objectId]) => !stale.has(objectId))))
     if (result.changed) commitManualPlan(result.plan)
-  }, [commitManualPlan, game.explored, game.phase, game.state, game.tick, replaceMovementGoals, respawning])
+  }, [commitManualPlan, game.explored, game.phase, game.state, game.tick, readOnly, replaceMovementGoals, respawning])
   const selected = useMemo(() => game.state?.objects.find((object) => object.id === selectedId) ?? null, [game.state, selectedId])
   const attackOptions = useMemo(() => {
     if (!selected || !targetMode) return []
@@ -161,14 +163,14 @@ export function ArenaPage({ demo = false, local = false }: { demo?: boolean; loc
     <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} />
     <section className="relative min-h-0 overflow-hidden">
       {!respawning && local && game.localSession?.mode === 'step' && game.tick && game.liveTick
-        ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} onAdvance={game.advance} onReplay={game.showReplay} onReturnLive={game.returnLive} onBranch={game.branchFromReplay} />
+        ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} godView={game.godView} godSnapshot={game.godSnapshot} onAdvance={game.advance} onReplay={game.showReplay} onReturnLive={game.returnLive} onBranch={game.branchFromReplay} onGodView={game.setGodObservation} onHumanFullVision={game.setHumanFullVision} />
         : !respawning && <GameHUD phase={game.phase} stateReceivedAt={game.stateReceivedAt} />}
       {!respawning && <UpkeepWarning state={game.state} className="pointer-events-none absolute left-3 right-3 top-16 z-20 lg:hidden" />}
-      {!respawning && game.tick && <PendingCommands tick={game.tick} state={game.state} receipts={game.receipts} belowUpkeepWarning={upkeepShortfall} />}
+      {!respawning && !game.godView && game.tick && <PendingCommands tick={game.tick} state={game.state} receipts={game.receipts} belowUpkeepWarning={upkeepShortfall} />}
       <WorldCanvas state={game.state} explored={game.explored} selectedId={selectedId} targeting={targetMode !== null} destinationSelecting={moveSelecting} attackPositions={attackPositions} targetableIds={targetableIds} routeDestinations={routeDestinations} moveArrows={moveArrows} sweepMarkers={sweepMarkers} shotMarkers={shotMarkers} centerPosition={centerPosition} centerRequest={centerRequest} zoomRequest={zoomRequest} onSelect={select} onTarget={chooseTarget} onAttackPosition={chooseAttackPosition} onMoveDestination={chooseMoveDestination} onCenterBeacon={() => { setCenterPosition(game.state!.champion_beacon.position); setCenterRequest((value) => value + 1) }} onAnchorChange={setAnchor} />
       {!respawning && <ResourceActivity events={game.state.events} />}
       {respawning && <RespawnOverlay destroyedBy={coreDestroyer} selfDestructed={coreSelfDestructed} />}
-      {!respawning && selected?.controlled && anchor && actionAvailability && !targetMode && !moveSelecting && <UnitActionDialog anchor={anchor} selected={selected} plan={plan} movementGoal={selected.id ? movementGoals[selected.id] : undefined} phase={game.phase} resources={game.state.resources} availability={actionAvailability} onClose={() => select(null)} onTargeting={() => { setMoveSelecting(false); setTargetMode('SHOOT') }} onSweepTargeting={() => { setMoveSelecting(false); setTargetMode('SWEEP') }} onMoveTargeting={() => { setTargetMode(null); setMovementError(null); setMoveSelecting(true) }} onCancelMovementGoal={() => cancelMovementGoal(selected)} onUnitAction={unitAction} onCoreAction={coreAction} />}
+      {!respawning && !readOnly && selected?.controlled && anchor && actionAvailability && !targetMode && !moveSelecting && <UnitActionDialog anchor={anchor} selected={selected} plan={plan} movementGoal={selected.id ? movementGoals[selected.id] : undefined} phase={game.phase} resources={game.state.resources} availability={actionAvailability} onClose={() => select(null)} onTargeting={() => { setMoveSelecting(false); setTargetMode('SHOOT') }} onSweepTargeting={() => { setMoveSelecting(false); setTargetMode('SWEEP') }} onMoveTargeting={() => { setTargetMode(null); setMovementError(null); setMoveSelecting(true) }} onCancelMovementGoal={() => cancelMovementGoal(selected)} onUnitAction={unitAction} onCoreAction={coreAction} />}
       {targetMode && <div className="panel absolute left-1/2 top-28 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full pl-4 pr-1.5 text-xs text-coral-hostile">{targetMode === 'SWEEP' ? <Sword size={15} /> : <Crosshair size={15} />}<span>{t(targetMode === 'SWEEP' ? 'game.sweepHint' : 'game.targetHint')}</span><button onClick={() => setTargetMode(null)} className="focus-ring ml-1 min-h-11 rounded-full px-3 text-zinc-400 hover:bg-white/5 hover:text-white">{t('common.cancel')}</button></div>}
       {moveSelecting && <div className={`panel absolute left-1/2 top-28 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full pl-4 pr-1.5 text-xs ${movementError ? 'text-coral-hostile' : 'text-cyan-signal'}`}><Move size={15} /><span>{t(movementError === 'UNKNOWN_DESTINATION' ? 'game.routeUnknown' : movementError ? 'game.routeBlocked' : 'game.moveHint')}</span><button onClick={() => { setMoveSelecting(false); setMovementError(null) }} className="focus-ring ml-1 min-h-11 rounded-full px-3 text-zinc-400 hover:bg-white/5 hover:text-white">{t('common.cancel')}</button></div>}
       {!respawning && <MapControls onCenter={() => { setCenterPosition(null); setCenterRequest((value) => value + 1) }} onZoom={(direction) => setZoomRequest((value) => direction * (Math.abs(value) + 1))} />}
