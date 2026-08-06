@@ -81,7 +81,7 @@ describe('LocalStepControl', () => {
       tick: 4,
       live: false,
       state: {
-        status: 'ACTIVE', resources: 0, population: 0, population_tier: 0, upkeep_next_tick: 0,
+        status: 'ACTIVE', resources: 0, population: 0,
         champion_beacon: { position: [0, 0] }, objects: [], events: [],
       },
       receipts: {},
@@ -147,7 +147,7 @@ describe('LocalStepControl', () => {
 
     rerender(<LocalStepControl {...baseProps} status={status(true)} replay={{
       match_id: 'root-match', tick: 4, live: false,
-      state: { status: 'ACTIVE', resources: 0, population: 0, population_tier: 0, upkeep_next_tick: 0, champion_beacon: { position: [0, 0] }, objects: [], events: [] },
+      state: { status: 'ACTIVE', resources: 0, population: 0, champion_beacon: { position: [0, 0] }, objects: [], events: [] },
       receipts: {}, explored: [], god: { human_full_vision: true },
     }} onGodView={setGodView} onHumanFullVision={setHumanFullVision} />)
     expect(screen.getByRole('switch', { name: 'Human full vision' })).toBeDisabled()

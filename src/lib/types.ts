@@ -57,8 +57,6 @@ export interface PlayerState {
   respawn_at_tick?: number
   resources: number
   population: number
-  population_tier: number
-  upkeep_next_tick: number
   champion_beacon: ChampionBeaconView
   objects: WorldObject[]
   events: GameEvent[]
@@ -223,8 +221,6 @@ export interface LocalGodPlayer {
   respawn_at_tick?: number | null
   resources: number
   population: number
-  population_tier: number
-  upkeep_next_tick: number
   core_id: string | null
   unit_ids: string[]
   events: GameEvent[]
