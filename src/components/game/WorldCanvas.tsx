@@ -74,11 +74,11 @@ interface TerrainScene {
   obstacleSprites: HTMLImageElement[]
   resourceSprites: HTMLImageElement[]
 }
-interface CachedTerrainTile { canvas: HTMLCanvasElement; pixels: number; cell: number }
+interface CachedTerrainTile { canvas: HTMLCanvasElement; pixels: number; cell: number; revision: string }
 interface TerrainTileCache {
-  scene: TerrainScene
   cell: number
   ratio: number
+  spriteSignature: string
   pixels: number
   tiles: Map<string, CachedTerrainTile>
 }
@@ -403,9 +403,10 @@ function drawTiledWorldTerrain(
   allowScaledCache: boolean,
 ) {
   let cache = cacheRef.current
-  if (!cache || cache.scene !== scene || (!allowScaledCache && cache.cell !== camera.cell) || cache.ratio !== ratio) {
+  const spriteSignature = `${scene.obstacleSprites.map((sprite) => sprite.src).join('|')}::${scene.resourceSprites.map((sprite) => sprite.src).join('|')}`
+  if (!cache || (!allowScaledCache && cache.cell !== camera.cell) || cache.ratio !== ratio || cache.spriteSignature !== spriteSignature) {
     if (cache) releaseTerrainTiles(cache)
-    cache = { scene, cell: camera.cell, ratio, pixels: 0, tiles: new Map() }
+    cache = { cell: camera.cell, ratio, spriteSignature, pixels: 0, tiles: new Map() }
     cacheRef.current = cache
   }
 
@@ -418,9 +419,15 @@ function drawTiledWorldTerrain(
     for (let chunkX = bounds.minX; chunkX <= bounds.maxX; chunkX++) {
       const key = `${chunkX},${chunkY}`
       visibleKeys.add(key)
+      const revision = terrainChunkRevision(chunkX, chunkY, scene)
       let tile = cache.tiles.get(key)
-      if (!tile) {
-        tile = createTerrainTile(chunkX, chunkY, allowScaledCache ? camera.cell : cache.cell, ratio, scene)
+      if (!tile || tile.revision !== revision) {
+        if (tile) {
+          cache.pixels -= tile.pixels
+          tile.canvas.width = 1
+          tile.canvas.height = 1
+        }
+        tile = createTerrainTile(chunkX, chunkY, allowScaledCache ? camera.cell : cache.cell, ratio, revision, scene)
         cache.tiles.set(key, tile)
         cache.pixels += tile.pixels
       } else {
@@ -440,14 +447,14 @@ function drawTiledWorldTerrain(
   evictTerrainTiles(cache, visibleKeys)
 }
 
-function createTerrainTile(chunkX: number, chunkY: number, cell: number, ratio: number, scene: TerrainScene): CachedTerrainTile {
+function createTerrainTile(chunkX: number, chunkY: number, cell: number, ratio: number, revision: string, scene: TerrainScene): CachedTerrainTile {
   const paddedCells = TERRAIN_CHUNK_CELLS + TERRAIN_CHUNK_PADDING_CELLS * 2
   const cssSize = paddedCells * cell
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(cssSize * ratio))
   canvas.height = Math.max(1, Math.ceil(cssSize * ratio))
   const context = canvas.getContext('2d')
-  if (!context) return { canvas, pixels: canvas.width * canvas.height, cell }
+  if (!context) return { canvas, pixels: canvas.width * canvas.height, cell, revision }
   context.setTransform(ratio, 0, 0, ratio, 0, 0)
   const firstX = chunkX * TERRAIN_CHUNK_CELLS
   const firstY = chunkY * TERRAIN_CHUNK_CELLS
@@ -457,7 +464,26 @@ function createTerrainTile(chunkX: number, chunkY: number, cell: number, ratio: 
     cell,
   }
   drawWorldTerrain(context, { width: cssSize, height: cssSize }, tileCamera, scene)
-  return { canvas, pixels: canvas.width * canvas.height, cell }
+  return { canvas, pixels: canvas.width * canvas.height, cell, revision }
+}
+
+function terrainChunkRevision(chunkX: number, chunkY: number, scene: TerrainScene) {
+  const firstX = chunkX * TERRAIN_CHUNK_CELLS
+  const firstY = chunkY * TERRAIN_CHUNK_CELLS
+  const margin = TERRAIN_CHUNK_PADDING_CELLS + 2
+  let revision = ''
+  for (let y = firstY - margin; y < firstY + TERRAIN_CHUNK_CELLS + margin; y++) {
+    for (let x = firstX - margin; x < firstX + TERRAIN_CHUNK_CELLS + margin; x++) {
+      const key = `${x},${y}`
+      const memory = scene.explored.get(key)?.kind
+      const code = (scene.visible.has(key) ? 1 : 0)
+        | (memory === 'EMPTY' ? 2 : memory === 'OBSTACLE' ? 4 : memory === 'RESOURCE' ? 6 : 0)
+        | (scene.visibleObstacleCells.has(key) ? 8 : 0)
+        | (scene.visibleResourceCells.has(key) ? 16 : 0)
+      revision += String.fromCharCode(code)
+    }
+  }
+  return revision
 }
 
 function evictTerrainTiles(cache: TerrainTileCache, visibleKeys: Set<string>) {

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, APIError, apiURL, officialApi } from '../lib/api'
 import { demoReceipt, demoState } from '../lib/demo'
 import { isReceivedNotice, type CommandReceipts } from '../lib/commandPlans'
-import { loadExplored, rememberVisible, type ExploredCell } from '../lib/exploration'
+import { loadExplored, observedCells, rememberVisible, type ExploredCell } from '../lib/exploration'
 import { positionKey } from '../lib/visibility'
-import type { CommandPlan, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalReplay, LocalSession, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
+import type { CommandPlan, LocalCompactExploration, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalReplay, LocalSession, LocalViewSelection, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
 
 type GameMessage =
   | { type: 'tick'; data: number }
@@ -26,6 +26,34 @@ function reconnectDelay(attempt: number) {
   return Math.round(bounded * (0.8 + Math.random() * 0.4))
 }
 
+function isAbortError(cause: unknown) {
+  return cause instanceof Error && cause.name === 'AbortError'
+}
+
+function sameView(left: LocalViewSelection, right: LocalViewSelection) {
+  return left.mode === right.mode
+    && (left.mode !== 'PLAYER' || (right.mode === 'PLAYER' && left.playerId === right.playerId))
+}
+
+function observationMatchesView(observation: LocalObservation, view: LocalViewSelection) {
+  return observation.view.mode === view.mode
+    && (view.mode !== 'PLAYER' || observation.view.player_id === view.playerId)
+}
+
+function exploredMap(cells: ExploredCell[]) {
+  return new Map(cells.map((cell) => [positionKey(cell.position), cell]))
+}
+
+function compactExploredMap(document: LocalCompactExploration) {
+  const cells = new Map<string, ExploredCell>()
+  for (const [y, startX, endX] of document.ranges) {
+    for (let x = startX; x <= endX; x++) cells.set(positionKey([x, y]), { position: [x, y], kind: 'EMPTY' })
+  }
+  for (const position of document.obstacles) cells.set(positionKey(position), { position, kind: 'OBSTACLE' })
+  for (const position of document.resources) cells.set(positionKey(position), { position, kind: 'RESOURCE' })
+  return cells
+}
+
 export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false, officialAgent = false) {
   const [liveTick, setLiveTick] = useState<number | null>(demo ? 10583 : null)
   const [liveState, setLiveState] = useState<PlayerState | null>(demo ? demoState : null)
@@ -38,15 +66,26 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   const [localStatus, setLocalStatus] = useState<LocalMatchStatus | null>(null)
   const [localHistory, setLocalHistory] = useState<LocalHistory | null>(null)
   const [replay, setReplay] = useState<LocalReplay | null>(null)
-  const [godView, setGodView] = useState(false)
+  const [localView, setLocalView] = useState<LocalViewSelection>({ mode: 'HUMAN' })
+  const [observation, setObservation] = useState<LocalObservation | null>(null)
+  const [observationPending, setObservationPending] = useState(false)
   const [godSnapshot, setGodSnapshot] = useState<LocalGodSnapshot | null>(null)
   const tickRef = useRef<number | null>(liveTick)
   const activeMatchIdRef = useRef<string | null>(null)
   const replayRef = useRef<LocalReplay | null>(null)
-  const godViewRef = useRef(false)
+  const localViewRef = useRef<LocalViewSelection>({ mode: 'HUMAN' })
+  const historyRef = useRef<LocalHistory | null>(null)
+  const humanExplorationMatchRef = useRef<string | null>(null)
   const replayRequestRef = useRef(0)
+  const observationRequestRef = useRef(0)
   const godRequestRef = useRef(0)
   const localContextRequestRef = useRef(0)
+  const contextAbortRef = useRef<AbortController | null>(null)
+  const observationAbortRef = useRef<AbortController | null>(null)
+  const replayAbortRef = useRef<AbortController | null>(null)
+  const historyAbortRef = useRef<AbortController | null>(null)
+  const godAbortRef = useRef<AbortController | null>(null)
+
   const mergeExplored = useCallback((cells: Map<string, ExploredCell>) => {
     setExplored((current) => {
       if (!current.size) return cells
@@ -56,13 +95,77 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     })
   }, [])
 
+  const applyHistory = useCallback((history: LocalHistory) => {
+    historyRef.current = history
+    setLocalHistory(history)
+  }, [])
+
+  const loadHistory = useCallback(async (matchId: string) => {
+    historyAbortRef.current?.abort()
+    const controller = new AbortController()
+    historyAbortRef.current = controller
+    try {
+      const history = await api.localHistory(matchId, controller.signal)
+      if (historyAbortRef.current !== controller) return null
+      applyHistory(history)
+      return history
+    } catch (cause) {
+      if (isAbortError(cause)) return null
+      setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    }
+  }, [applyHistory])
+
+  const requestObservation = useCallback(async (
+    view: LocalViewSelection,
+    matchId: string | null,
+    tick: number | null,
+  ) => {
+    if (!localMatch) throw new Error('local observation unavailable')
+    const requestId = ++observationRequestRef.current
+    observationAbortRef.current?.abort()
+    const controller = new AbortController()
+    observationAbortRef.current = controller
+    setObservationPending(true)
+    try {
+      const snapshot = await api.localObserve(
+        view.mode,
+        view.mode === 'PLAYER' ? view.playerId : null,
+        matchId,
+        tick,
+        controller.signal,
+      )
+      if (requestId !== observationRequestRef.current || observationAbortRef.current !== controller) return null
+      if (view.mode === 'HUMAN') {
+        if (localViewRef.current.mode === 'HUMAN') {
+          setExplored(compactExploredMap(snapshot.exploration))
+          humanExplorationMatchRef.current = snapshot.match_id
+        }
+      } else if (sameView(localViewRef.current, view)) {
+        setObservation(snapshot)
+      }
+      return snapshot
+    } catch (cause) {
+      if (isAbortError(cause)) return null
+      if (requestId === observationRequestRef.current) setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      throw cause
+    } finally {
+      if (requestId === observationRequestRef.current) setObservationPending(false)
+    }
+  }, [localMatch])
+
   useEffect(() => {
     setExplored(new Map())
     if (localMatch) return
     void loadExplored(explorationNamespace).then(mergeExplored).catch(() => undefined)
   }, [explorationNamespace, localMatch, mergeExplored])
+
   useEffect(() => {
-    if (demo) { setLiveState(demoState); void rememberVisible(explorationNamespace, demoState).then(mergeExplored).catch(() => undefined); return }
+    if (demo) {
+      setLiveState(demoState)
+      void rememberVisible(explorationNamespace, demoState).then(mergeExplored).catch(() => undefined)
+      return
+    }
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let reconnectAttempt = 0
@@ -96,36 +199,57 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
           const message = JSON.parse(String(event.data)) as GameMessage
           if (message.type === 'tick') {
             if (!Number.isSafeInteger(message.data) || message.data <= 0) throw new Error('invalid tick')
-            tickRef.current = message.data; setLiveTick(message.data); setPhase('syncing'); setLiveReceipts({}); setLocalStatus(null); setError('')
-            if (godViewRef.current) {
-              godRequestRef.current += 1
-              setGodSnapshot(null)
-            }
+            tickRef.current = message.data
+            setLiveTick(message.data)
+            setPhase('syncing')
+            setLiveReceipts({})
+            setError('')
+            contextAbortRef.current?.abort()
+            observationAbortRef.current?.abort()
             return
           }
           if (message.type === 'state') {
             if (!message.data || typeof message.data !== 'object') throw new Error('invalid state')
-            setLiveState(message.data); setStateReceivedAt(Date.now()); setPhase('open')
+            setLiveState(message.data)
+            setStateReceivedAt(Date.now())
+            setPhase('open')
             if (localMatch) {
+              mergeExplored(observedCells(message.data))
               const stateTick = tickRef.current
               const contextRequest = ++localContextRequestRef.current
-              void api.localMatch().then(async (status) => {
-                if (stopped || contextRequest !== localContextRequestRef.current) return
+              contextAbortRef.current?.abort()
+              const controller = new AbortController()
+              contextAbortRef.current = controller
+              void api.localMatch(controller.signal).then((status) => {
+                if (stopped || controller.signal.aborted || contextRequest !== localContextRequestRef.current) return
                 setLocalStatus(status)
                 const matchId = status.match_id ?? activeMatchIdRef.current
-                if (!matchId || stateTick === null) return
+                if (!matchId || stateTick === null || tickRef.current !== stateTick) return
                 activeMatchIdRef.current = matchId
-                const [history, liveReplay, liveGod] = await Promise.all([
-                  api.localHistory(matchId),
-                  api.localReplay(matchId, stateTick),
-                  godViewRef.current ? api.localGod(matchId, stateTick) : Promise.resolve(null),
-                ])
-                if (stopped || contextRequest !== localContextRequestRef.current || activeMatchIdRef.current !== matchId || tickRef.current !== stateTick) return
-                setLocalHistory(history)
-                setExplored(new Map(liveReplay.explored.map((cell) => [positionKey(cell.position), cell])))
-                if (godViewRef.current && liveGod) setGodSnapshot(liveGod)
+                setLocalHistory((current) => {
+                  if (!current) return current
+                  const matches = current.matches.map((match) => match.id === matchId && match.latest_tick !== stateTick
+                    ? { ...match, latest_tick: stateTick }
+                    : match)
+                  const nextHistory = { ...current, active_match_id: matchId, matches }
+                  historyRef.current = nextHistory
+                  return nextHistory
+                })
+                if (replayRef.current) return
+                const view = localViewRef.current
+                if (view.mode !== 'HUMAN') {
+                  void requestObservation(view, matchId, stateTick).catch(() => undefined)
+                  return
+                }
+                if (message.data.view_mode || humanExplorationMatchRef.current !== matchId) {
+                  void requestObservation({ mode: 'HUMAN' }, matchId, stateTick).then((snapshot) => {
+                    if (snapshot && tickRef.current === stateTick) humanExplorationMatchRef.current = matchId
+                  }).catch(() => undefined)
+                }
               }).catch((cause) => {
-                setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+                if (!isAbortError(cause) && contextRequest === localContextRequestRef.current) {
+                  setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+                }
               })
             } else {
               void rememberVisible(explorationNamespace, message.data).then(mergeExplored).catch(() => undefined)
@@ -157,9 +281,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
           setError(officialAgent ? 'OFFICIAL_AGENT_UNAUTHORIZED' : 'UNAUTHORIZED')
           return
         }
-        if (officialAgent && [1006, 1011, 1013].includes(event.code)) {
-          setError('OFFICIAL_PROXY_UNAVAILABLE')
-        }
+        if (officialAgent && [1006, 1011, 1013].includes(event.code)) setError('OFFICIAL_PROXY_UNAVAILABLE')
         scheduleReconnect()
       }
     }
@@ -181,9 +303,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         const code = cause instanceof APIError ? cause.code : 'OFFICIAL_PROXY_UNAVAILABLE'
         setError(code)
         setPhase('offline')
-        if (code !== 'OFFICIAL_PROXY_ORIGIN_INVALID' && code !== 'OFFICIAL_AGENT_UNAUTHORIZED') {
-          scheduleReconnect()
-        }
+        if (code !== 'OFFICIAL_PROXY_ORIGIN_INVALID' && code !== 'OFFICIAL_AGENT_UNAUTHORIZED') scheduleReconnect()
       })
     }
 
@@ -192,6 +312,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         if (stopped) return
         activeMatchIdRef.current = session.match_id
         setLocalSession(session)
+        if (session.match_id) void loadHistory(session.match_id).catch(() => undefined)
         connect()
       }).catch((cause) => {
         if (stopped) return
@@ -204,12 +325,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     return () => {
       stopped = true
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      contextAbortRef.current?.abort()
+      observationAbortRef.current?.abort()
+      replayAbortRef.current?.abort()
+      historyAbortRef.current?.abort()
+      godAbortRef.current?.abort()
       if (socket) socket.close(1000, 'component unmounted')
     }
-  }, [demo, explorationNamespace, localMatch, mergeExplored, officialAgent])
+  }, [demo, explorationNamespace, loadHistory, localMatch, mergeExplored, officialAgent, requestObservation])
 
   const submit = useCallback(async (plan: CommandPlan) => {
-    if (replayRef.current || godViewRef.current) throw new Error('local replay or god observation is read-only')
+    if (replayRef.current || localViewRef.current.mode !== 'HUMAN') throw new Error('local replay or observer view is read-only')
     setError('')
     try {
       const receipt = demo
@@ -251,97 +377,122 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   const showReplay = useCallback(async (matchId: string, tick: number) => {
     if (!localMatch) throw new Error('local replay unavailable')
     const requestId = ++replayRequestRef.current
-    const godRequestId = godViewRef.current ? ++godRequestRef.current : null
+    replayAbortRef.current?.abort()
+    const controller = new AbortController()
+    replayAbortRef.current = controller
+    const view = localViewRef.current
+    const observationRequestId = view.mode === 'HUMAN' ? null : ++observationRequestRef.current
+    if (observationRequestId !== null) {
+      observationAbortRef.current?.abort()
+      setObservationPending(true)
+    }
     setError('')
+    if (historyRef.current?.selected_match_id !== matchId) void loadHistory(matchId).catch(() => undefined)
     try {
-      const [nextReplay, history, nextGod] = await Promise.all([
-        api.localReplay(matchId, tick),
-        api.localHistory(matchId),
-        godRequestId !== null ? api.localGod(matchId, tick) : Promise.resolve(null),
+      const [nextReplay, nextObservation] = await Promise.all([
+        api.localReplay(matchId, tick, controller.signal),
+        view.mode === 'HUMAN'
+          ? Promise.resolve(null)
+          : api.localObserve(view.mode, view.mode === 'PLAYER' ? view.playerId : null, matchId, tick, controller.signal),
       ])
-      if (requestId !== replayRequestRef.current) return nextReplay
+      if (requestId !== replayRequestRef.current || replayAbortRef.current !== controller) return nextReplay
       replayRef.current = nextReplay
       setReplay(nextReplay)
-      setLocalHistory(history)
-      if (godRequestId === godRequestRef.current && godViewRef.current && nextGod) setGodSnapshot(nextGod)
+      if (nextObservation && observationRequestId === observationRequestRef.current && sameView(localViewRef.current, view)) setObservation(nextObservation)
       return nextReplay
     } catch (cause) {
-      if (requestId === replayRequestRef.current) setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+      if (!isAbortError(cause) && requestId === replayRequestRef.current) setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
       throw cause
+    } finally {
+      if (requestId === replayRequestRef.current && (observationRequestId === null || observationRequestId === observationRequestRef.current)) setObservationPending(false)
     }
-  }, [localMatch])
+  }, [loadHistory, localMatch])
 
   const returnLive = useCallback(() => {
     replayRequestRef.current += 1
+    replayAbortRef.current?.abort()
     replayRef.current = null
     setReplay(null)
     setError('')
     const matchId = activeMatchIdRef.current
-    const contextRequest = ++localContextRequestRef.current
-    if (matchId) void api.localHistory(matchId).then((history) => {
-      if (contextRequest === localContextRequestRef.current && !replayRef.current) setLocalHistory(history)
-    }).catch((cause) => setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED'))
-    if (godViewRef.current) {
-      const tick = tickRef.current
-      const requestId = ++godRequestRef.current
-      setGodSnapshot(null)
-      if (matchId && tick !== null) void api.localGod(matchId, tick).then((snapshot) => {
-        if (godViewRef.current && requestId === godRequestRef.current && tickRef.current === tick) setGodSnapshot(snapshot)
-      }).catch((cause) => setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED'))
-    }
-  }, [])
+    const tick = tickRef.current
+    if (matchId && historyRef.current?.selected_match_id !== matchId) void loadHistory(matchId).catch(() => undefined)
+    const view = localViewRef.current
+    if (matchId && tick !== null) void requestObservation(view, matchId, tick).catch(() => undefined)
+  }, [loadHistory, requestObservation])
 
   const branchFromReplay = useCallback(async () => {
     const selected = replayRef.current
     if (!localMatch || !selected) throw new Error('local replay unavailable')
     localContextRequestRef.current += 1
+    contextAbortRef.current?.abort()
+    observationAbortRef.current?.abort()
     setError('')
     try {
       const receipt = await api.branchLocalMatch(selected.match_id, selected.tick)
       activeMatchIdRef.current = receipt.match_id
       replayRequestRef.current += 1
-      godRequestRef.current += 1
+      replayAbortRef.current?.abort()
       replayRef.current = null
       setReplay(null)
-      setGodSnapshot(null)
+      historyRef.current = null
       setLocalHistory(null)
       setLocalStatus(null)
       setLocalSession((current) => current ? { ...current, match_id: receipt.match_id } : current)
-      setExplored(new Map())
+      setExplored(exploredMap(selected.explored))
+      humanExplorationMatchRef.current = null
       setPhase('syncing')
+      void loadHistory(receipt.match_id).catch(() => undefined)
       return receipt
     } catch (cause) {
       setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
       throw cause
     }
-  }, [localMatch])
+  }, [loadHistory, localMatch])
 
-  const setGodObservation = useCallback(async (enabled: boolean) => {
-    if (!localMatch) throw new Error('local god mode unavailable')
-    const requestId = ++godRequestRef.current
-    godViewRef.current = enabled
-    setGodView(enabled)
+  const setLocalObservation = useCallback(async (nextView: LocalViewSelection) => {
+    if (!localMatch) throw new Error('local observation unavailable')
+    const previous = localViewRef.current
+    if (sameView(previous, nextView)) return null
+    localViewRef.current = nextView
+    setLocalView(nextView)
     setError('')
-    if (!enabled) {
-      setGodSnapshot(null)
+    const selected = replayRef.current
+    if (nextView.mode === 'HUMAN' && selected) {
+      observationRequestRef.current += 1
+      observationAbortRef.current?.abort()
+      setObservationPending(false)
       return null
     }
-    const selected = replayRef.current
     const matchId = selected?.match_id ?? activeMatchIdRef.current
     const selectedTick = selected?.tick ?? tickRef.current
     try {
-      const snapshot = matchId && selectedTick !== null
-        ? await api.localGod(matchId, selectedTick)
-        : await api.localGod()
-      if (requestId === godRequestRef.current && godViewRef.current) setGodSnapshot(snapshot)
+      return await requestObservation(nextView, matchId, selectedTick)
+    } catch (cause) {
+      localViewRef.current = previous
+      setLocalView(previous)
+      throw cause
+    }
+  }, [localMatch, requestObservation])
+
+  const setGodObservation = useCallback((enabled: boolean) => setLocalObservation(enabled ? { mode: 'GLOBAL' } : { mode: 'HUMAN' }), [setLocalObservation])
+
+  const loadGodDiagnostics = useCallback(async () => {
+    if (!localMatch) throw new Error('local god mode unavailable')
+    const requestId = ++godRequestRef.current
+    godAbortRef.current?.abort()
+    const controller = new AbortController()
+    godAbortRef.current = controller
+    const selected = replayRef.current
+    const matchId = selected?.match_id ?? activeMatchIdRef.current
+    const selectedTick = selected?.tick ?? tickRef.current
+    setError('')
+    try {
+      const snapshot = await api.localGod(matchId, selectedTick, controller.signal)
+      if (requestId === godRequestRef.current && godAbortRef.current === controller) setGodSnapshot(snapshot)
       return snapshot
     } catch (cause) {
-      if (requestId === godRequestRef.current) {
-        godViewRef.current = false
-        setGodView(false)
-        setGodSnapshot(null)
-        setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
-      }
+      if (!isAbortError(cause) && requestId === godRequestRef.current) setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
       throw cause
     }
   }, [localMatch])
@@ -357,12 +508,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         settings: receipt.settings,
         operations: receipt.record ? [...current.operations, receipt.record] : current.operations,
       } : current)
+      const matchId = activeMatchIdRef.current
+      const tick = tickRef.current
+      if (localViewRef.current.mode === 'HUMAN' && matchId && tick !== null) {
+        void requestObservation({ mode: 'HUMAN' }, matchId, tick).catch(() => undefined)
+      }
       return receipt
     } catch (cause) {
       setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
       throw cause
     }
-  }, [localMatch])
+  }, [localMatch, requestObservation])
 
   const addLocalParticipant = useCallback(async (username: string, controller: 'AGENT' | 'BOT') => {
     if (!localMatch || replayRef.current) throw new Error('local god operation unavailable')
@@ -390,20 +546,19 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     setError('')
     try {
       const receipt = await api.setLocalTickLabel(matchId, tick, label)
-      setLocalHistory((current) => current?.selected_match_id === matchId ? {
-        ...current,
-        labels: receipt.labels,
-      } : current)
+      setLocalHistory((current) => {
+        if (current?.selected_match_id !== matchId) return current
+        const next = { ...current, labels: receipt.labels }
+        historyRef.current = next
+        return next
+      })
       setLocalStatus((current) => current?.match_id === matchId && current.tick === tick ? {
         ...current,
         ...(receipt.label ? { label: receipt.label } : { label: undefined }),
       } : current)
       setReplay((current) => {
         if (!current || current.match_id !== matchId || current.tick !== tick) return current
-        const next = {
-          ...current,
-          ...(receipt.label ? { label: receipt.label } : { label: undefined }),
-        }
+        const next = { ...current, ...(receipt.label ? { label: receipt.label } : { label: undefined }) }
         replayRef.current = next
         return next
       })
@@ -418,45 +573,47 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     }
   }, [localMatch])
 
-  const replayExplored = useMemo(() => replay
-    ? new Map(replay.explored.map((cell) => [positionKey(cell.position), cell]))
-    : null, [replay])
+  const replayExplored = useMemo(() => replay ? exploredMap(replay.explored) : null, [replay])
   const selectedMatchId = replay?.match_id ?? localStatus?.match_id ?? localSession?.match_id ?? null
-  const selectedTick = replay?.tick ?? liveTick
-  const activeGodSnapshot = godView
-    && godSnapshot?.match_id === selectedMatchId
-    && godSnapshot.tick === selectedTick
-    ? godSnapshot
+  const activeObservation = observation
+    && observation.match_id === selectedMatchId
+    && observationMatchesView(observation, localView)
+    ? observation
     : null
-  const tick = activeGodSnapshot?.tick ?? replay?.tick ?? liveTick
-  const state = activeGodSnapshot?.state ?? replay?.state ?? liveState
+  const observationExplored = useMemo(() => activeObservation ? compactExploredMap(activeObservation.exploration) : null, [activeObservation])
+  const tick = replay?.tick ?? liveTick
+  const state = activeObservation?.state ?? replay?.state ?? liveState
   const receipts: CommandReceipts = replay?.receipts ?? liveReceipts
   const displayedPhase: StreamPhase = replay ? 'replay' : phase
+  const godView = localView.mode === 'GLOBAL'
 
   return {
     tick,
     liveTick,
     state,
     phase: displayedPhase,
-    stateReceivedAt: replay ? null : stateReceivedAt,
+    stateReceivedAt: replay || localView.mode !== 'HUMAN' ? null : stateReceivedAt,
     receipts,
-    explored: activeGodSnapshot
-      ? new Map(activeGodSnapshot.explored.map((cell) => [positionKey(cell.position), cell]))
-      : replayExplored ?? explored,
+    explored: observationExplored ?? replayExplored ?? explored,
     error,
     submit,
     localSession,
     localStatus,
     localHistory,
     replay,
+    localView,
+    observation: activeObservation,
+    observationPending,
     godView,
-    godSnapshot: activeGodSnapshot,
-    readOnly: Boolean(replay || godView),
+    godSnapshot,
+    readOnly: Boolean(replay || localView.mode !== 'HUMAN'),
     advance,
     showReplay,
     returnLive,
     branchFromReplay,
+    setLocalObservation,
     setGodObservation,
+    loadGodDiagnostics,
     setHumanFullVision,
     addLocalParticipant,
     setTickLabel,

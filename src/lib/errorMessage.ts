@@ -43,6 +43,8 @@ const ERROR_KEYS = {
   LOCAL_STEP_MODE_DISABLED: 'errors.localStepDisabled',
   LOCAL_REPLAY_NOT_FOUND: 'errors.localReplayNotFound',
   LOCAL_MATCH_FAMILY_MISMATCH: 'errors.localMatchFamilyMismatch',
+  LOCAL_OBSERVER_NOT_FOUND: 'errors.localObserverNotFound',
+  LOCAL_OBSERVER_NOT_READY: 'errors.localObserverNotReady',
   OFFICIAL_PROXY_UNAVAILABLE: 'errors.officialProxyUnavailable',
   OFFICIAL_PROXY_ORIGIN_INVALID: 'errors.officialProxyOriginInvalid',
   OFFICIAL_AGENT_UNAUTHORIZED: 'errors.officialAgentUnauthorized',

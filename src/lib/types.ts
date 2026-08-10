@@ -225,6 +225,34 @@ export interface LocalExploredCell {
   kind: 'EMPTY' | 'OBSTACLE' | 'RESOURCE'
 }
 
+export type LocalObservationMode = 'HUMAN' | 'PLAYER' | 'GLOBAL'
+
+export type LocalViewSelection =
+  | { mode: 'HUMAN' }
+  | { mode: 'GLOBAL' }
+  | { mode: 'PLAYER'; playerId: string }
+
+export interface LocalObservationView {
+  mode: LocalObservationMode
+  player_id?: string
+  username?: string
+}
+
+export interface LocalCompactExploration {
+  ranges: Array<[y: number, startX: number, endX: number]>
+  obstacles: Position[]
+  resources: Position[]
+}
+
+export interface LocalObservation {
+  match_id: string | null
+  tick: number
+  live: boolean
+  view: LocalObservationView
+  state: PlayerState
+  exploration: LocalCompactExploration
+}
+
 export interface LocalReplay {
   match_id: string
   tick: number

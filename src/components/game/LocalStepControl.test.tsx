@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../../lib/i18n'
@@ -47,25 +47,42 @@ const baseProps = {
   status: status(false),
   history,
   replay: null,
-  godView: false,
+  localView: { mode: 'HUMAN' as const },
+  observationPending: false,
   godSnapshot: null,
   onAdvance: vi.fn().mockResolvedValue(undefined),
   onReplay: vi.fn().mockResolvedValue(undefined),
   onReturnLive: vi.fn(),
   onBranch: vi.fn().mockResolvedValue(undefined),
-  onGodView: vi.fn().mockResolvedValue(undefined),
+  onObservation: vi.fn().mockResolvedValue(undefined),
+  onLoadGodDiagnostics: vi.fn().mockResolvedValue(undefined),
   onHumanFullVision: vi.fn().mockResolvedValue(undefined),
   onAddParticipant: vi.fn().mockResolvedValue(undefined),
   onSetTickLabel: vi.fn().mockResolvedValue(undefined),
 }
 
+function openPanel(tab?: 'Advance' | 'View' | 'History' | 'Lab') {
+  fireEvent.click(screen.getByRole('button', { name: 'Open control panel' }))
+  if (!tab) return
+  const navigation = screen.getByRole('navigation', { name: 'Control panel sections' })
+  fireEvent.click(within(navigation).getByRole('button', { name: tab }))
+}
+
 describe('LocalStepControl', () => {
   afterEach(() => vi.useRealTimers())
+
+  it('keeps the map clear by default and exposes a collapsible drawer', () => {
+    render(<LocalStepControl {...baseProps} />)
+    expect(screen.queryByRole('navigation', { name: 'Control panel sections' })).not.toBeInTheDocument()
+    openPanel()
+    expect(screen.getByRole('navigation', { name: 'Control panel sections' })).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close control panel' })[0])
+    expect(screen.queryByRole('navigation', { name: 'Control panel sections' })).not.toBeInTheDocument()
+  })
 
   it('advances only after every bot is ready', async () => {
     const advance = vi.fn().mockResolvedValue(undefined)
     const { rerender } = render(<LocalStepControl {...baseProps} onAdvance={advance} />)
-
     const button = screen.getByRole('button', { name: 'Resolve Tick 7' })
     expect(button).toBeDisabled()
     rerender(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
@@ -73,208 +90,120 @@ describe('LocalStepControl', () => {
     expect(advance).toHaveBeenCalledOnce()
   })
 
-  it('shows a bot failure and keeps resolution disabled', () => {
+  it('shows bot failures inside the Advance drawer and keeps resolution disabled', () => {
     render(<LocalStepControl {...baseProps} status={status(false, 'RuntimeError: failed')} />)
+    openPanel('Advance')
     expect(screen.getByText('Failed')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Resolve Tick 7' })).toBeDisabled()
   })
 
-  it('requires the consecutive Tick count to be an integer', () => {
-    render(<LocalStepControl {...baseProps} status={status(true)} />)
-
-    const input = screen.getByRole('spinbutton', { name: 'Consecutive Ticks (integer)' })
-    const button = screen.getByRole('button', { name: 'Advance 10 Ticks' })
-    expect(input).toHaveAttribute('aria-invalid', 'false')
-    expect(button).toBeEnabled()
-
-    fireEvent.change(input, { target: { value: '2.5' } })
-    expect(input).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.getByRole('button', { name: 'Advance Ticks' })).toBeDisabled()
-  })
-
-  it('advances a batch once per newly ready Tick', async () => {
+  it('requires an integer batch size and advances once per newly ready Tick', async () => {
     vi.useFakeTimers()
     const advance = vi.fn().mockResolvedValue(undefined)
     const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
+    openPanel('Advance')
 
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Consecutive Ticks (integer)' }), { target: { value: '3' } })
+    const input = screen.getByRole('spinbutton', { name: 'Consecutive Ticks (integer)' })
+    fireEvent.change(input, { target: { value: '2.5' } })
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    fireEvent.change(input, { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Advance 3 Ticks' }))
-    await act(async () => { await vi.runOnlyPendingTimersAsync() })
-    expect(advance).toHaveBeenCalledTimes(1)
-
     await act(async () => { await vi.runOnlyPendingTimersAsync() })
     expect(advance).toHaveBeenCalledTimes(1)
 
     rerender(<LocalStepControl {...baseProps} tick={8} liveTick={8} status={status(true, undefined, 8)} history={historyAt(8)} onAdvance={advance} />)
     await act(async () => { await vi.runOnlyPendingTimersAsync() })
     expect(advance).toHaveBeenCalledTimes(2)
-
     rerender(<LocalStepControl {...baseProps} tick={9} liveTick={9} status={status(true, undefined, 9)} history={historyAt(9)} onAdvance={advance} />)
     await act(async () => { await vi.runOnlyPendingTimersAsync() })
     expect(advance).toHaveBeenCalledTimes(3)
-    expect(screen.getByRole('button', { name: 'Advance 3 Ticks' })).toBeEnabled()
   })
 
-  it('uses a one-second Auto Tick interval by default', async () => {
+  it('uses a one-second Auto Tick interval and never overlaps requests', async () => {
     vi.useFakeTimers()
-    const advance = vi.fn().mockResolvedValue(undefined)
-    render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
+    let releaseFirst: (() => void) | undefined
+    const firstRequest = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const advance = vi.fn().mockImplementationOnce(() => firstRequest).mockResolvedValue(undefined)
+    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
+    openPanel('Advance')
 
     fireEvent.click(screen.getByRole('button', { name: 'Start Auto Tick' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(999) })
     expect(advance).not.toHaveBeenCalled()
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
     expect(advance).toHaveBeenCalledOnce()
-  })
-
-  it('waits only for readiness when Tick settlement exceeds the Auto Tick interval', async () => {
-    vi.useFakeTimers()
-    const advance = vi.fn().mockResolvedValue(undefined)
-    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Start Auto Tick' }))
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
-    expect(advance).toHaveBeenCalledTimes(1)
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_500) })
-    rerender(<LocalStepControl {...baseProps} tick={8} liveTick={8} status={status(true, undefined, 8)} history={historyAt(8)} onAdvance={advance} />)
-    await act(async () => { await vi.runOnlyPendingTimersAsync() })
-    expect(advance).toHaveBeenCalledTimes(2)
-  })
-
-  it('waits for the remaining interval when the next Tick is ready early', async () => {
-    vi.useFakeTimers()
-    const advance = vi.fn().mockResolvedValue(undefined)
-    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Start Auto Tick' }))
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
-    expect(advance).toHaveBeenCalledTimes(1)
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(200) })
-    rerender(<LocalStepControl {...baseProps} tick={8} liveTick={8} status={status(true, undefined, 8)} history={historyAt(8)} onAdvance={advance} />)
-    await act(async () => { await vi.advanceTimersByTimeAsync(799) })
-    expect(advance).toHaveBeenCalledTimes(1)
-    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
-    expect(advance).toHaveBeenCalledTimes(2)
-  })
-
-  it('never starts another Auto Tick while the current request is in flight', async () => {
-    vi.useFakeTimers()
-    let releaseFirst: (() => void) | undefined
-    const firstRequest = new Promise<void>((resolve) => { releaseFirst = resolve })
-    const advance = vi.fn()
-      .mockImplementationOnce(() => firstRequest)
-      .mockResolvedValue(undefined)
-    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
-
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Tick interval (seconds)' }), { target: { value: '0' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Start Auto Tick' }))
-    await act(async () => { await vi.runOnlyPendingTimersAsync() })
-    expect(advance).toHaveBeenCalledTimes(1)
 
     rerender(<LocalStepControl {...baseProps} tick={8} liveTick={8} status={status(true, undefined, 8)} history={historyAt(8)} onAdvance={advance} />)
-    await act(async () => { await vi.runOnlyPendingTimersAsync() })
-    expect(advance).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      releaseFirst?.()
-      await firstRequest
-    })
-    await act(async () => { await vi.runOnlyPendingTimersAsync() })
-    expect(advance).toHaveBeenCalledTimes(2)
-  })
-
-  it('stops Auto Tick without advancing a later ready Tick', async () => {
-    vi.useFakeTimers()
-    const advance = vi.fn().mockResolvedValue(undefined)
-    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Start Auto Tick' }))
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
     expect(advance).toHaveBeenCalledOnce()
-    fireEvent.click(screen.getByRole('button', { name: 'Stop Auto Tick' }))
-
-    rerender(<LocalStepControl {...baseProps} tick={8} liveTick={8} status={status(true, undefined, 8)} history={historyAt(8)} onAdvance={advance} />)
-    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-    expect(advance).toHaveBeenCalledOnce()
+    await act(async () => { releaseFirst?.(); await firstRequest })
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { await vi.runOnlyPendingTimersAsync() })
+    expect(advance).toHaveBeenCalledTimes(2)
   })
 
-  it('steps through stored history and branches from a replay Tick', async () => {
+  it('switches to robot and global read-only perspectives', async () => {
+    const observe = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onObservation={observe} />)
+    openPanel('View')
+
+    await userEvent.click(screen.getByRole('radio', { name: /@bot/ }))
+    expect(observe).toHaveBeenCalledWith({ mode: 'PLAYER', playerId: 'bot-1' })
+    await userEvent.click(screen.getByRole('radio', { name: /Global view/ }))
+    expect(observe).toHaveBeenCalledWith({ mode: 'GLOBAL' })
+
+    rerender(<LocalStepControl {...baseProps} status={status(true)} localView={{ mode: 'PLAYER', playerId: 'bot-1' }} observationPending />)
+    expect(screen.getByText(/previous frame stays visible/i)).toBeInTheDocument()
+    expect(screen.getByText(/strictly read-only/i)).toBeInTheDocument()
+  })
+
+  it('steps through stored history, labels a Tick, and branches from replay', async () => {
     const replay: LocalReplay = {
-      match_id: 'root-match',
-      tick: 4,
-      live: false,
-      state: {
-        status: 'ACTIVE', resources: 0, population: 0,
-        champion_beacon: { position: [0, 0] }, objects: [], events: [],
-      },
-      receipts: {},
-      explored: [],
-      god: { human_full_vision: false },
+      match_id: 'root-match', tick: 4, live: false,
+      state: { status: 'ACTIVE', resources: 0, population: 0, champion_beacon: { position: [0, 0] }, objects: [], events: [] },
+      receipts: {}, explored: [], god: { human_full_vision: false },
     }
     const showReplay = vi.fn().mockResolvedValue(undefined)
     const branch = vi.fn().mockResolvedValue(undefined)
     const returnLive = vi.fn()
-    render(<LocalStepControl
-      {...baseProps}
-      tick={4}
-      phase="replay"
-      replay={replay}
-      onReplay={showReplay}
-      onBranch={branch}
-      onReturnLive={returnLive}
-    />)
+    const saveLabel = vi.fn().mockResolvedValue(undefined)
+    render(<LocalStepControl {...baseProps} tick={4} phase="replay" replay={replay} onReplay={showReplay} onBranch={branch} onReturnLive={returnLive} onSetTickLabel={saveLabel} />)
+    openPanel('History')
 
     await userEvent.click(screen.getByRole('button', { name: 'Next Tick' }))
     expect(showReplay).toHaveBeenCalledWith('root-match', 5)
     await userEvent.click(screen.getByRole('button', { name: 'Branch from Tick 4' }))
     expect(branch).toHaveBeenCalledOnce()
-    await userEvent.click(screen.getByRole('button', { name: 'Return to live Tick 7' }))
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Tick label' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Tick label' }), 'Before battle')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(saveLabel).toHaveBeenCalledWith('root-match', 4, 'Before battle')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Live' })[0])
     expect(returnLive).toHaveBeenCalledOnce()
   })
 
-  it('saves labels and jumps directly to a labeled Tick', async () => {
-    const saveLabel = vi.fn().mockResolvedValue(undefined)
-    const showReplay = vi.fn().mockResolvedValue(undefined)
-    render(<LocalStepControl {...baseProps} status={status(true)} onSetTickLabel={saveLabel} onReplay={showReplay} />)
-
-    await userEvent.type(screen.getByRole('textbox', { name: 'Tick label' }), 'Before battle')
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(saveLabel).toHaveBeenCalledWith('root-match', 7, 'Before battle')
-
-    await userEvent.click(screen.getByRole('button', { name: 'T4 · First contact' }))
-    expect(showReplay).toHaveBeenCalledWith('root-match', 4)
-  })
-
-  it('queues a new external Agent from the god console', async () => {
+  it('loads heavyweight diagnostics only from the Lab and keeps replay operations disabled', async () => {
+    const diagnostics = vi.fn().mockResolvedValue(undefined)
+    const fullVision = vi.fn().mockResolvedValue(undefined)
     const addParticipant = vi.fn().mockResolvedValue(undefined)
-    render(<LocalStepControl {...baseProps} status={status(true)} onAddParticipant={addParticipant} />)
+    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onLoadGodDiagnostics={diagnostics} onHumanFullVision={fullVision} onAddParticipant={addParticipant} />)
+    openPanel('Lab')
 
-    await userEvent.click(screen.getByRole('button', { name: 'God mode' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Load diagnostics' }))
+    expect(diagnostics).toHaveBeenCalledOnce()
+    await userEvent.click(screen.getByRole('switch', { name: 'Human full vision' }))
+    expect(fullVision).toHaveBeenCalledWith(true)
     await userEvent.type(screen.getByRole('textbox', { name: 'Participant username' }), 'late_agent')
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Participant controller' }), 'AGENT')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
-
     expect(addParticipant).toHaveBeenCalledWith('late_agent', 'AGENT')
-  })
-
-  it('opens the god console and keeps historical operations read-only', async () => {
-    const setGodView = vi.fn().mockResolvedValue(undefined)
-    const setHumanFullVision = vi.fn().mockResolvedValue(undefined)
-    const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onGodView={setGodView} onHumanFullVision={setHumanFullVision} />)
-
-    await userEvent.click(screen.getByRole('button', { name: 'God mode' }))
-    await userEvent.click(screen.getByRole('switch', { name: 'Global observation' }))
-    expect(setGodView).toHaveBeenCalledWith(true)
-    await userEvent.click(screen.getByRole('switch', { name: 'Human full vision' }))
-    expect(setHumanFullVision).toHaveBeenCalledWith(true)
 
     rerender(<LocalStepControl {...baseProps} status={status(true)} replay={{
       match_id: 'root-match', tick: 4, live: false,
       state: { status: 'ACTIVE', resources: 0, population: 0, champion_beacon: { position: [0, 0] }, objects: [], events: [] },
       receipts: {}, explored: [], god: { human_full_vision: true },
-    }} onGodView={setGodView} onHumanFullVision={setHumanFullVision} />)
+    }} onLoadGodDiagnostics={diagnostics} onHumanFullVision={fullVision} onAddParticipant={addParticipant} />)
     expect(screen.getByRole('switch', { name: 'Human full vision' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
   })
 })

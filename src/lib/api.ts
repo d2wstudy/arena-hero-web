@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalObservationMode, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -60,12 +60,21 @@ export const api = {
     setCSRF(session.csrf_token, 'local')
     return session
   },
-  localMatch: () => localRequest<LocalMatchStatus>('/api/local/match'),
-  localHistory: (matchId?: string) => localRequest<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`),
-  localReplay: (matchId: string, tick: number) => localRequest<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`),
-  localGod: (matchId?: string | null, tick?: number | null) => localRequest<LocalGodSnapshot>(matchId && tick !== null && tick !== undefined
+  localMatch: (signal?: AbortSignal) => localRequest<LocalMatchStatus>('/api/local/match', { signal }),
+  localHistory: (matchId?: string, signal?: AbortSignal) => localRequest<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`, { signal }),
+  localReplay: (matchId: string, tick: number, signal?: AbortSignal) => localRequest<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`, { signal }),
+  localObserve: (view: LocalObservationMode, playerId?: string | null, matchId?: string | null, tick?: number | null, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ view })
+    if (view === 'PLAYER' && playerId) query.set('player_id', playerId)
+    if (matchId && tick !== null && tick !== undefined) {
+      query.set('match_id', matchId)
+      query.set('tick', String(tick))
+    }
+    return localRequest<LocalObservation>(`/api/local/observe?${query.toString()}`, { signal })
+  },
+  localGod: (matchId?: string | null, tick?: number | null, signal?: AbortSignal) => localRequest<LocalGodSnapshot>(matchId && tick !== null && tick !== undefined
     ? `/api/local/god?match_id=${encodeURIComponent(matchId)}&tick=${tick}`
-    : '/api/local/god'),
+    : '/api/local/god', { signal }),
   setHumanFullVision: (enabled: boolean) => localRequest<LocalGodOperationReceipt>('/api/local/god', {
     method: 'POST',
     headers: { 'X-CSRF-Token': getCSRF('local') },
