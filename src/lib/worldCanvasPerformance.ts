@@ -1,4 +1,5 @@
 import type { WorldObject } from './types'
+import type { LocalChunkViewport } from './types'
 
 const MAX_CANVAS_PIXEL_RATIO = 2
 const MAX_CANVAS_BACKING_PIXELS = 9_000_000
@@ -11,6 +12,7 @@ export const MIN_WORLD_CELL_SIZE = 24
 export const MAX_WORLD_CELL_SIZE = 78
 
 export const TERRAIN_CHUNK_CELLS = 8
+export const WORLD_CHUNK_CELLS = 32
 
 export interface WorldCamera {
   x: number
@@ -48,6 +50,23 @@ export function terrainChunkBounds(camera: WorldCamera, size: { width: number; h
     maxX: Math.floor(maxWorldX / TERRAIN_CHUNK_CELLS),
     minY: Math.floor(minWorldY / TERRAIN_CHUNK_CELLS),
     maxY: Math.floor(maxWorldY / TERRAIN_CHUNK_CELLS),
+  }
+}
+
+export function observationChunkViewport(
+  camera: WorldCamera,
+  size: { width: number; height: number },
+): LocalChunkViewport {
+  const marginChunks = 1
+  const minWorldX = Math.floor(camera.x - size.width / camera.cell / 2)
+  const maxWorldX = Math.ceil(camera.x + size.width / camera.cell / 2)
+  const minWorldY = Math.floor(camera.y - size.height / camera.cell / 2)
+  const maxWorldY = Math.ceil(camera.y + size.height / camera.cell / 2)
+  return {
+    min_chunk_x: Math.floor(minWorldX / WORLD_CHUNK_CELLS) - marginChunks,
+    max_chunk_x: Math.floor(maxWorldX / WORLD_CHUNK_CELLS) + marginChunks,
+    min_chunk_y: Math.floor(minWorldY / WORLD_CHUNK_CELLS) - marginChunks,
+    max_chunk_y: Math.floor(maxWorldY / WORLD_CHUNK_CELLS) + marginChunks,
   }
 }
 

@@ -66,6 +66,19 @@ describe('manual command API', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ tick: 12 })
   })
 
+  it('scopes global observation to the current materialized chunk viewport', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ match_id: 'match-1', tick: 7, live: true, view: { mode: 'GLOBAL' }, state: {}, exploration: { ranges: [], obstacles: [], resources: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await api.localObserve('GLOBAL', null, 'match-1', 7, undefined, {
+      min_chunk_x: -2,
+      max_chunk_x: 1,
+      min_chunk_y: -3,
+      max_chunk_y: 2,
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/local/observe?view=GLOBAL&match_id=match-1&tick=7&min_chunk_x=-2&max_chunk_x=1&min_chunk_y=-3&max_chunk_y=2')
+  })
+
   it('loads replay history and creates a CSRF-protected branch', async () => {
     setCSRF('local-csrf', 'local')
     const fetchMock = vi.spyOn(globalThis, 'fetch')

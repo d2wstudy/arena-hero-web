@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorldObject } from '../../lib/types'
-import { canvasPixelRatio, prioritizeSelectionCandidates, terrainChunkBounds, wheelZoomCell } from '../../lib/worldCanvasPerformance'
+import { canvasPixelRatio, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, wheelZoomCell } from '../../lib/worldCanvasPerformance'
 
 describe('prioritizeSelectionCandidates', () => {
   it('lets a tutorial target win the first click when units share a cell', () => {
@@ -69,6 +69,26 @@ describe('terrainChunkBounds', () => {
       maxX: -1,
       minY: -4,
       maxY: -1,
+    })
+  })
+})
+
+describe('observationChunkViewport', () => {
+  it('requests only the visible 32-cell world chunks plus a prefetch margin', () => {
+    expect(observationChunkViewport({ x: 0, y: 0, cell: 40 }, { width: 800, height: 600 })).toEqual({
+      min_chunk_x: -2,
+      max_chunk_x: 1,
+      min_chunk_y: -2,
+      max_chunk_y: 1,
+    })
+  })
+
+  it('remains sparse and uses floor division at negative coordinates', () => {
+    expect(observationChunkViewport({ x: -65, y: 64, cell: 44 }, { width: 800, height: 600 })).toEqual({
+      min_chunk_x: -4,
+      max_chunk_x: -1,
+      min_chunk_y: 0,
+      max_chunk_y: 3,
     })
   })
 })

@@ -244,6 +244,22 @@ export interface LocalCompactExploration {
   resources: Position[]
 }
 
+export interface LocalChunkViewport {
+  min_chunk_x: number
+  max_chunk_x: number
+  min_chunk_y: number
+  max_chunk_y: number
+}
+
+export interface LocalObservationWorld {
+  mode: 'MATERIALIZED'
+  chunk_size: number
+  total_materialized_chunks: number
+  chunks: Position[]
+  viewport: LocalChunkViewport | null
+  unmaterialized_omitted: true
+}
+
 export interface LocalObservation {
   match_id: string | null
   tick: number
@@ -251,6 +267,7 @@ export interface LocalObservation {
   view: LocalObservationView
   state: PlayerState
   exploration: LocalCompactExploration
+  world?: LocalObservationWorld
 }
 
 export interface LocalReplay {

@@ -4,7 +4,7 @@ import { demoReceipt, demoState } from '../lib/demo'
 import { isReceivedNotice, type CommandReceipts } from '../lib/commandPlans'
 import { loadExplored, observedCells, rememberVisible, type ExploredCell } from '../lib/exploration'
 import { positionKey } from '../lib/visibility'
-import type { CommandPlan, LocalCompactExploration, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalReplay, LocalSession, LocalViewSelection, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
+import type { CommandPlan, LocalChunkViewport, LocalCompactExploration, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalReplay, LocalSession, LocalViewSelection, PlayerState, ReceivedNotice, StreamPhase } from '../lib/types'
 
 type GameMessage =
   | { type: 'tick'; data: number }
@@ -38,6 +38,13 @@ function sameView(left: LocalViewSelection, right: LocalViewSelection) {
 function observationMatchesView(observation: LocalObservation, view: LocalViewSelection) {
   return observation.view.mode === view.mode
     && (view.mode !== 'PLAYER' || observation.view.player_id === view.playerId)
+}
+
+function sameViewport(left: LocalChunkViewport | null, right: LocalChunkViewport) {
+  return left?.min_chunk_x === right.min_chunk_x
+    && left.max_chunk_x === right.max_chunk_x
+    && left.min_chunk_y === right.min_chunk_y
+    && left.max_chunk_y === right.max_chunk_y
 }
 
 function exploredMap(cells: ExploredCell[]) {
@@ -74,6 +81,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   const activeMatchIdRef = useRef<string | null>(null)
   const replayRef = useRef<LocalReplay | null>(null)
   const localViewRef = useRef<LocalViewSelection>({ mode: 'HUMAN' })
+  const observationViewportRef = useRef<LocalChunkViewport | null>(null)
   const historyRef = useRef<LocalHistory | null>(null)
   const humanExplorationMatchRef = useRef<string | null>(null)
   const replayRequestRef = useRef(0)
@@ -134,6 +142,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         matchId,
         tick,
         controller.signal,
+        view.mode === 'GLOBAL' ? observationViewportRef.current : null,
       )
       if (requestId !== observationRequestRef.current || observationAbortRef.current !== controller) return null
       if (view.mode === 'HUMAN') {
@@ -393,7 +402,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
         api.localReplay(matchId, tick, controller.signal),
         view.mode === 'HUMAN'
           ? Promise.resolve(null)
-          : api.localObserve(view.mode, view.mode === 'PLAYER' ? view.playerId : null, matchId, tick, controller.signal),
+          : api.localObserve(view.mode, view.mode === 'PLAYER' ? view.playerId : null, matchId, tick, controller.signal, view.mode === 'GLOBAL' ? observationViewportRef.current : null),
       ])
       if (requestId !== replayRequestRef.current || replayAbortRef.current !== controller) return nextReplay
       replayRef.current = nextReplay
@@ -476,6 +485,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   }, [localMatch, requestObservation])
 
   const setGodObservation = useCallback((enabled: boolean) => setLocalObservation(enabled ? { mode: 'GLOBAL' } : { mode: 'HUMAN' }), [setLocalObservation])
+
+  const setObservationViewport = useCallback((viewport: LocalChunkViewport) => {
+    if (sameViewport(observationViewportRef.current, viewport)) return
+    observationViewportRef.current = viewport
+    const view = localViewRef.current
+    if (!localMatch || view.mode !== 'GLOBAL') return
+    const selected = replayRef.current
+    const matchId = selected?.match_id ?? activeMatchIdRef.current
+    const selectedTick = selected?.tick ?? tickRef.current
+    void requestObservation(view, matchId, selectedTick).catch(() => undefined)
+  }, [localMatch, requestObservation])
 
   const loadGodDiagnostics = useCallback(async () => {
     if (!localMatch) throw new Error('local god mode unavailable')
@@ -613,6 +633,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     branchFromReplay,
     setLocalObservation,
     setGodObservation,
+    setObservationViewport,
     loadGodDiagnostics,
     setHumanFullVision,
     addLocalParticipant,

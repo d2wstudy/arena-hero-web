@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalObservationMode, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalChunkViewport, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalObservationMode, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -63,12 +63,18 @@ export const api = {
   localMatch: (signal?: AbortSignal) => localRequest<LocalMatchStatus>('/api/local/match', { signal }),
   localHistory: (matchId?: string, signal?: AbortSignal) => localRequest<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`, { signal }),
   localReplay: (matchId: string, tick: number, signal?: AbortSignal) => localRequest<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`, { signal }),
-  localObserve: (view: LocalObservationMode, playerId?: string | null, matchId?: string | null, tick?: number | null, signal?: AbortSignal) => {
+  localObserve: (view: LocalObservationMode, playerId?: string | null, matchId?: string | null, tick?: number | null, signal?: AbortSignal, viewport?: LocalChunkViewport | null) => {
     const query = new URLSearchParams({ view })
     if (view === 'PLAYER' && playerId) query.set('player_id', playerId)
     if (matchId && tick !== null && tick !== undefined) {
       query.set('match_id', matchId)
       query.set('tick', String(tick))
+    }
+    if (view === 'GLOBAL' && viewport) {
+      query.set('min_chunk_x', String(viewport.min_chunk_x))
+      query.set('max_chunk_x', String(viewport.max_chunk_x))
+      query.set('min_chunk_y', String(viewport.min_chunk_y))
+      query.set('max_chunk_y', String(viewport.max_chunk_y))
     }
     return localRequest<LocalObservation>(`/api/local/observe?${query.toString()}`, { signal })
   },

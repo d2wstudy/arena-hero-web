@@ -10,11 +10,11 @@ import { collectEntityPositions, continueOrStartMotionAnimation, interpolatePosi
 import type { MoveArrow } from '../../lib/movementPreview'
 import { OBSTACLE_SPRITE_PATHS, obstacleCellShape, obstacleSpriteIndex, obstacleSpriteRect, type ObstacleCellShape } from '../../lib/obstacleArt'
 import { RESOURCE_SPRITE_PATHS, resourceSpriteIndex, resourceSpriteRect } from '../../lib/resourceArt'
-import type { PlayerState, Position, WorldObject } from '../../lib/types'
+import type { LocalChunkViewport, PlayerState, Position, WorldObject } from '../../lib/types'
 import { UNIT_SPRITE_PATHS, unitArtType, unitSpriteRect, type UnitArtType } from '../../lib/unitArt'
 import { computeVisibility, positionKey } from '../../lib/visibility'
 import { WORLD_BACKGROUND_PATH } from '../../lib/worldArt'
-import { canvasPixelRatio, MAX_WORLD_CELL_SIZE, MIN_WORLD_CELL_SIZE, prioritizeSelectionCandidates, TERRAIN_CHUNK_CELLS, terrainChunkBounds, wheelZoomCell, type WorldCamera } from '../../lib/worldCanvasPerformance'
+import { canvasPixelRatio, MAX_WORLD_CELL_SIZE, MIN_WORLD_CELL_SIZE, observationChunkViewport, prioritizeSelectionCandidates, TERRAIN_CHUNK_CELLS, terrainChunkBounds, wheelZoomCell, type WorldCamera } from '../../lib/worldCanvasPerformance'
 import { BeaconDirectionIndicator } from './BeaconDirectionIndicator'
 import { MapFeatureInfo } from './MapFeatureInfo'
 import type { MapAnchor } from './UnitActionDialog'
@@ -40,6 +40,7 @@ interface Props {
   onMoveDestination: (position: Position) => void
   onCenterBeacon: () => void
   onAnchorChange: (anchor: MapAnchor | null) => void
+  onViewportChange?: (viewport: LocalChunkViewport) => void
   highlightPositions?: Position[]
   preferredSelectionId?: string
 }
@@ -85,7 +86,7 @@ interface TerrainTileCache {
 const unitSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedUnitSprite>>()
 const beaconSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedBeaconSprite>>()
 
-export function WorldCanvas({ state, explored, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, highlightPositions = [], preferredSelectionId }: Props) {
+export function WorldCanvas({ state, explored, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
   const backgroundCanvasRef = useRef<HTMLCanvasElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -136,6 +137,10 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
   }), [explored, obstacleSprites, resourceSprites, visible, visibleObstacleCells, visibleResourceCells])
   const visibleShotMarkers = useMemo(() => shotMarkers.filter((marker) => positionInViewport(marker.from, camera, size, 1) || positionInViewport(marker.to, camera, size, 1)), [camera, shotMarkers, size])
   const inspectedFeatureView = useMemo(() => inspectedFeature ? mapFeaturesAt(inspectedFeature.position, state, explored).find((feature) => feature.kind === inspectedFeature.kind) ?? null : null, [explored, inspectedFeature, state])
+  const observationViewport = useMemo(
+    () => observationChunkViewport(camera, size),
+    [camera, size],
+  )
 
   const scheduleCamera = useCallback((update: (current: Camera) => Camera) => {
     const current = pendingCameraRef.current ?? cameraRef.current
@@ -184,6 +189,7 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
   useEffect(() => { if (selectedId) setInspectedFeature(null) }, [selectedId])
   useEffect(() => { if (inspectedFeature && !inspectedFeatureView) setInspectedFeature(null) }, [inspectedFeature, inspectedFeatureView])
   useLayoutEffect(() => { cameraRef.current = camera }, [camera])
+  useEffect(() => { onViewportChange?.(observationViewport) }, [observationViewport, onViewportChange])
   useEffect(() => () => {
     if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current)
     if (zoomEndTimeoutRef.current !== null) window.clearTimeout(zoomEndTimeoutRef.current)
@@ -235,11 +241,14 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
       return
     }
     const core = entities.find((object) => object.kind === 'CORE' && object.controlled)
-    if (!core?.position) { centeredCoreId.current = null; return }
+    if (!core?.position) {
+      if (state.view_mode !== 'GOD') centeredCoreId.current = null
+      return
+    }
     if (!explicitlyRequested && centeredCoreId.current === core.id) return
     centeredCoreId.current = core.id ?? 'controlled-core'
     setCameraImmediately((current) => ({ ...current, x: core.position![0], y: core.position![1] }))
-  }, [centerPosition, centerRequest, entities, setCameraImmediately])
+  }, [centerPosition, centerRequest, entities, setCameraImmediately, state.view_mode])
   useEffect(() => {
     if (zoomRequest) scheduleZoom((current) => Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, current + Math.sign(zoomRequest) * 8)))
   }, [scheduleZoom, zoomRequest])
