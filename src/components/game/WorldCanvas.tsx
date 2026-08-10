@@ -10,7 +10,7 @@ import { collectEntityPositions, continueOrStartMotionAnimation, interpolatePosi
 import type { MoveArrow } from '../../lib/movementPreview'
 import { OBSTACLE_SPRITE_PATHS, obstacleCellShape, obstacleSpriteIndex, obstacleSpriteRect, type ObstacleCellShape } from '../../lib/obstacleArt'
 import { RESOURCE_SPRITE_PATHS, resourceSpriteIndex, resourceSpriteRect } from '../../lib/resourceArt'
-import type { LocalChunkViewport, PlayerState, Position, WorldObject } from '../../lib/types'
+import type { LocalChunkViewport, LocalMovementPurpose, LocalTacticMovementIntent, PlayerState, Position, WorldObject } from '../../lib/types'
 import { UNIT_SPRITE_PATHS, unitArtType, unitSpriteRect, type UnitArtType } from '../../lib/unitArt'
 import { computeVisibility, positionKey } from '../../lib/visibility'
 import { WORLD_BACKGROUND_PATH } from '../../lib/worldArt'
@@ -31,6 +31,7 @@ interface Props {
   moveArrows: MoveArrow[]
   sweepMarkers: SweepMarker[]
   shotMarkers: ShotMarker[]
+  tacticMovements?: LocalTacticMovementIntent[]
   centerPosition?: Position | null
   centerRequest: number
   zoomRequest: number
@@ -86,7 +87,7 @@ interface TerrainTileCache {
 const unitSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedUnitSprite>>()
 const beaconSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedBeaconSprite>>()
 
-export function WorldCanvas({ state, explored, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
+export function WorldCanvas({ state, explored, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
   const backgroundCanvasRef = useRef<HTMLCanvasElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -267,7 +268,7 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
     const context = canvas.getContext('2d'); if (!context) return
     context.setTransform(ratio, 0, 0, ratio, 0, 0)
     drawTiledWorldTerrain(backgroundContext, size, camera, ratio, terrainScene, terrainCacheRef, zooming)
-    drawWorldPlanMarkers(backgroundContext, size, camera, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition)
+    drawWorldPlanMarkers(backgroundContext, size, camera, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition)
     const nextPositions = collectEntityPositions(state)
     const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const animationStart = performance.now()
@@ -310,7 +311,7 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
     }
     renderFrame(performance.now())
     return () => { if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current); animationFrameRef.current = null }
-  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, selectedId, targetableIds, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
+  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, selectedId, targetableIds, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
   useEffect(() => {
     const selected = entities.find((object) => object.id === selectedId)
     if (!selected?.position) { onAnchorChange(null); return }
@@ -550,10 +551,11 @@ function drawWorldTerrain(ctx: CanvasRenderingContext2D, size: { width: number; 
   for (const resource of renderedResources) drawResource(ctx, resource.position, resource.x, resource.y, camera.cell, resource.visible, resourceSprites)
 }
 
-function drawWorldPlanMarkers(ctx: CanvasRenderingContext2D, size: { width: number; height: number }, camera: Camera, routeDestinations: Map<string, RouteDestination[]>, moveArrows: Map<string, MoveArrow[]>, sweepMarkers: Map<string, SweepMarker[]>, shotMarkers: Map<string, ShotMarker[]>) {
+function drawWorldPlanMarkers(ctx: CanvasRenderingContext2D, size: { width: number; height: number }, camera: Camera, tacticMovements: LocalTacticMovementIntent[], routeDestinations: Map<string, RouteDestination[]>, moveArrows: Map<string, MoveArrow[]>, sweepMarkers: Map<string, SweepMarker[]>, shotMarkers: Map<string, ShotMarker[]>) {
   const toScreen = ([x, y]: Position) => [size.width / 2 + (x - camera.x) * camera.cell, size.height / 2 + (y - camera.y) * camera.cell] as const
   const minX = Math.floor(camera.x - size.width / camera.cell / 2) - 1, maxX = Math.ceil(camera.x + size.width / camera.cell / 2) + 1
   const minY = Math.floor(camera.y - size.height / camera.cell / 2) - 1, maxY = Math.ceil(camera.y + size.height / camera.cell / 2) + 1
+  drawTacticMovementIntents(ctx, size, camera, tacticMovements, toScreen)
   // Ranger previews span up to three cells, so include a small marker margin
   // without scanning every planned marker on each camera frame.
   for (let y = minY - 3; y <= maxY + 3; y++) for (let x = minX - 3; x <= maxX + 3; x++) {
@@ -563,6 +565,92 @@ function drawWorldPlanMarkers(ctx: CanvasRenderingContext2D, size: { width: numb
     for (const marker of sweepMarkers.get(key) ?? []) drawSweepSword(ctx, toScreen(marker.from), toScreen(marker.to), camera.cell, marker.source === 'AGENT' ? AGENT_VIOLET : PRIMARY_BLUE)
     for (const marker of shotMarkers.get(key) ?? []) drawShotArc(ctx, toScreen(marker.from), toScreen(marker.to), camera.cell, marker.source === 'AGENT' ? AGENT_VIOLET : PRIMARY_BLUE)
   }
+}
+
+const TACTIC_PURPOSE_COLORS: Record<LocalMovementPurpose, string> = {
+  RESOURCE: RESOURCE_GREEN_LIGHT,
+  FRONTIER: '#70d5cf',
+  PATROL: AGENT_VIOLET,
+  RETURN_HOME: BEACON_GOLD_LIGHT,
+  STAGING: PRIMARY_BLUE_LIGHT,
+}
+
+const TACTIC_PURPOSE_LABELS: Record<LocalMovementPurpose, string> = {
+  RESOURCE: 'R',
+  FRONTIER: 'F',
+  PATROL: 'P',
+  RETURN_HOME: 'H',
+  STAGING: 'S',
+}
+
+function drawTacticMovementIntents(
+  ctx: CanvasRenderingContext2D,
+  size: { width: number; height: number },
+  camera: Camera,
+  movements: LocalTacticMovementIntent[],
+  toScreen: (position: Position) => readonly [number, number],
+) {
+  for (const movement of movements) {
+    if (!movement.path.length) continue
+    const color = movement.blocked ? HOSTILE_CORAL : TACTIC_PURPOSE_COLORS[movement.purpose]
+    const origin = movement.path[0]
+    const routeVisible = movement.path.some((position) => positionInViewport(position, camera, size, 1))
+    const targetVisible = positionInViewport(movement.target, camera, size, 1)
+    if (!routeVisible && !targetVisible) continue
+
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = Math.max(1.5, camera.cell * .04)
+    ctx.shadowColor = color
+    ctx.shadowBlur = Math.max(2, camera.cell * .055)
+    ctx.globalAlpha = movement.blocked ? .72 : .78
+
+    if (movement.path.length > 1) {
+      for (let index = 1; index < movement.path.length; index++) {
+        const from = movement.path[index - 1], to = movement.path[index]
+        if (!positionInViewport(from, camera, size, 1) && !positionInViewport(to, camera, size, 1)) continue
+        ctx.setLineDash(index === 1 ? [] : [Math.max(3, camera.cell * .12), Math.max(2, camera.cell * .08)])
+        const [fromX, fromY] = toScreen(from), [toX, toY] = toScreen(to)
+        ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY); ctx.stroke()
+      }
+    } else if (movement.blocked && (routeVisible || targetVisible)) {
+      ctx.setLineDash([Math.max(2, camera.cell * .07), Math.max(3, camera.cell * .12)])
+      const [fromX, fromY] = toScreen(origin), [toX, toY] = toScreen(movement.target)
+      ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY); ctx.stroke()
+    }
+
+    ctx.setLineDash([])
+    if (positionInViewport(origin, camera, size, 1)) {
+      const [originX, originY] = toScreen(origin)
+      ctx.beginPath(); ctx.arc(originX, originY, Math.max(1.5, camera.cell * .035), 0, Math.PI * 2); ctx.fill()
+    }
+    if (targetVisible) drawTacticTarget(ctx, toScreen(movement.target), camera.cell, color, movement.purpose, movement.blocked)
+    ctx.restore()
+  }
+}
+
+function drawTacticTarget(ctx: CanvasRenderingContext2D, [x, y]: readonly [number, number], cell: number, color: string, purpose: LocalMovementPurpose, blocked: boolean) {
+  const radius = cell * .19
+  ctx.save()
+  ctx.globalAlpha = blocked ? .9 : .86
+  ctx.strokeStyle = color
+  ctx.fillStyle = 'rgba(8,10,18,.76)'
+  ctx.lineWidth = Math.max(1.5, cell * .035)
+  ctx.setLineDash(blocked ? [Math.max(2, cell * .06), Math.max(2, cell * .05)] : [])
+  ctx.beginPath(); ctx.moveTo(x, y - radius); ctx.lineTo(x + radius, y); ctx.lineTo(x, y + radius); ctx.lineTo(x - radius, y); ctx.closePath(); ctx.fill(); ctx.stroke()
+  ctx.setLineDash([])
+  if (blocked) {
+    const inset = radius * .52
+    ctx.beginPath(); ctx.moveTo(x - inset, y - inset); ctx.lineTo(x + inset, y + inset); ctx.moveTo(x + inset, y - inset); ctx.lineTo(x - inset, y + inset); ctx.stroke()
+  } else {
+    ctx.fillStyle = color
+    ctx.font = `700 ${Math.max(7, cell * .14)}px "JetBrains Mono", monospace`
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(TACTIC_PURPOSE_LABELS[purpose], x, y + .5)
+  }
+  ctx.restore()
 }
 
 function drawWorldEntities(ctx: CanvasRenderingContext2D, size: { width: number; height: number }, camera: Camera, state: PlayerState, unitSprites: Partial<Record<UnitArtType, HTMLImageElement>>, beaconSprite: HTMLImageElement | null, entityGroups: WorldObject[][], selectedId: string | null, targetableIds: Set<string>, motions: Map<string, EntityMotion>, movementProgress: number, resolvedSweeps: SweepMarker[], sweepProgress: number, resolvedShots: ResolvedShotMarker[], shotProgress: number, selectionProgress: number) {

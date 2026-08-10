@@ -260,6 +260,22 @@ export interface LocalObservationWorld {
   unmaterialized_omitted: true
 }
 
+export type LocalMovementPurpose = 'RESOURCE' | 'FRONTIER' | 'PATROL' | 'RETURN_HOME' | 'STAGING'
+
+export interface LocalTacticMovementIntent {
+  object_id: string
+  purpose: LocalMovementPurpose
+  target: Position
+  path: Position[]
+  blocked: boolean
+}
+
+export interface LocalTacticDiagnostics {
+  player_id: string
+  username: string
+  movement: LocalTacticMovementIntent[]
+}
+
 export interface LocalObservation {
   match_id: string | null
   tick: number
@@ -268,6 +284,7 @@ export interface LocalObservation {
   state: PlayerState
   exploration: LocalCompactExploration
   world?: LocalObservationWorld
+  tactics?: LocalTacticDiagnostics[]
 }
 
 export interface LocalReplay {

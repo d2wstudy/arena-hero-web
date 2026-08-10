@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEffect } from 'react'
 import '../lib/i18n'
+import type { LocalObservation } from '../lib/types'
 import { ArenaPage } from './ArenaPage'
 
 const game = vi.hoisted(() => ({
@@ -27,17 +28,19 @@ const game = vi.hoisted(() => ({
   receipts: {},
   submit: vi.fn(),
   error: null,
+  observation: null as LocalObservation | null,
 }))
 
 vi.mock('../hooks/useGameStream', () => ({ useGameStream: () => game }))
 vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { username: 'player' } }) }))
 vi.mock('../components/game/WorldCanvas', () => ({
-  WorldCanvas: ({ centerPosition, centerRequest, selectedId, attackPositions = [], onAttackPosition, onAnchorChange }: { centerPosition?: [number, number] | null; centerRequest: number; selectedId: string | null; attackPositions?: [number, number][]; onAttackPosition?: (position: [number, number]) => void; onAnchorChange: (anchor: { x: number; y: number; side: 'right' } | null) => void }) => {
+  WorldCanvas: ({ centerPosition, centerRequest, selectedId, attackPositions = [], tacticMovements = [], onAttackPosition, onAnchorChange }: { centerPosition?: [number, number] | null; centerRequest: number; selectedId: string | null; attackPositions?: [number, number][]; tacticMovements?: unknown[]; onAttackPosition?: (position: [number, number]) => void; onAnchorChange: (anchor: { x: number; y: number; side: 'right' } | null) => void }) => {
     useEffect(() => { onAnchorChange(selectedId ? { x: 100, y: 100, side: 'right' } : null) }, [onAnchorChange, selectedId])
     return <div
         data-testid="world-canvas"
         data-center-position={centerPosition ? JSON.stringify(centerPosition) : ''}
         data-center-request={centerRequest}
+        data-tactic-movements={JSON.stringify(tacticMovements)}
       >
         {attackPositions.some(([x, y]) => x === 3 && y === 0) && <button type="button" onClick={() => onAttackPosition?.([3, 0])}>Attack predicted cell</button>}
       </div>
@@ -45,7 +48,10 @@ vi.mock('../components/game/WorldCanvas', () => ({
 }))
 
 describe('ArenaPage asset selection', () => {
-  beforeEach(() => game.submit.mockReset())
+  beforeEach(() => {
+    game.submit.mockReset()
+    game.observation = null
+  })
 
   it('centers the map on a Unit selected from the asset list', async () => {
     render(<ArenaPage demo />)
@@ -71,5 +77,25 @@ describe('ArenaPage asset selection', () => {
 			tick: 42,
 			unit_actions: { ranger: { type: 'SHOOT', expected_cell: [3, 0] } },
 		}))
+  })
+
+  it('passes local tactic movement diagnostics to the world map', () => {
+    game.observation = {
+      match_id: 'match-1',
+      tick: 42,
+      live: true,
+      view: { mode: 'PLAYER', player_id: 'bot-1', username: 'bot' },
+      state: game.state,
+      exploration: { ranges: [], obstacles: [], resources: [] },
+      tactics: [{
+        player_id: 'bot-1',
+        username: 'bot',
+        movement: [{ object_id: 'worker', purpose: 'RESOURCE', target: [14, -7], path: [[12, -7], [13, -7], [14, -7]], blocked: false }],
+      }],
+    }
+
+    render(<ArenaPage local />)
+
+    expect(screen.getByTestId('world-canvas')).toHaveAttribute('data-tactic-movements', JSON.stringify(game.observation.tactics![0].movement))
   })
 })
