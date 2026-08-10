@@ -8,6 +8,7 @@ import { PendingCommands } from '../components/game/PendingCommands'
 import { ResourceActivity } from '../components/game/ResourceActivity'
 import { WorldCanvas } from '../components/game/WorldCanvas'
 import { APIError, replayApi } from '../lib/api'
+import { buildCoreReplayLives, buildReplayExplorationIndex, replayExploredAt } from '../lib/captureReplay'
 import type { CaptureReplayFrame, CaptureReplayManifest, GameEvent, Position, WorldObject } from '../lib/types'
 
 const EMPTY_SET = new Set<string>()
@@ -44,15 +45,17 @@ export function ReplayPage() {
         nextFrames.push(...page.frames)
         nextAfterTick = page.has_more ? page.next_after_tick : null
       }
+      const nextLives = buildCoreReplayLives(nextFrames, nextManifest.open_session)
       setManifest(nextManifest)
       setFrames(nextFrames)
       setIndex((previous) => {
         const currentTick = currentTickRef.current
         if (currentTick !== null) {
           const matching = nextFrames.findIndex((frame) => frame.tick === currentTick)
-          if (matching >= 0) return matching
+          if (matching >= 0 && nextLives.some((life) => matching >= life.startIndex && matching <= life.endIndex)) return matching
         }
-        return Math.max(0, Math.min(previous, nextFrames.length - 1))
+        if (nextLives.some((life) => previous >= life.startIndex && previous <= life.endIndex)) return previous
+        return nextLives[0]?.startIndex ?? Math.max(0, Math.min(previous, nextFrames.length - 1))
       })
       setError('')
     } catch (cause) {
@@ -71,36 +74,44 @@ export function ReplayPage() {
     return () => window.clearInterval(timer)
   }, [loadCapture, manifest?.open_session])
 
+  const lives = useMemo(() => buildCoreReplayLives(frames, Boolean(manifest?.open_session)), [frames, manifest?.open_session])
   const frame = frames[index] ?? null
+  const life = useMemo(() => lives.find((candidate) => index >= candidate.startIndex && index <= candidate.endIndex) ?? null, [index, lives])
+  const localIndex = life ? index - life.startIndex : 0
+  const explorationTimeline = useMemo(() => buildReplayExplorationIndex(frames), [frames])
+  const explored = useMemo(() => replayExploredAt(explorationTimeline, index), [explorationTimeline, index])
   useEffect(() => { currentTickRef.current = frame?.tick ?? null }, [frame?.tick])
   useEffect(() => {
-    if (!playing || !frame) return undefined
-    if (index >= frames.length - 1) {
+    if (!playing || !frame || !life) return undefined
+    if (index >= life.endIndex) {
       setPlaying(false)
       return undefined
     }
-    const timer = window.setTimeout(() => setIndex((current) => Math.min(current + 1, frames.length - 1)), intervalMs)
+    const timer = window.setTimeout(() => setIndex((current) => Math.min(current + 1, life.endIndex)), intervalMs)
     return () => window.clearTimeout(timer)
-  }, [frame, frames.length, index, intervalMs, playing])
+  }, [frame, index, intervalMs, life, playing])
   useEffect(() => {
     if (selectedId && !frame?.state.objects.some((object) => object.id === selectedId)) setSelectedId(null)
   }, [frame, selectedId])
 
   const jumps = useMemo<ReplayJump[]>(() => {
-    const specs: Array<[string, string]> = [
-      ['CORE_DAMAGED', t('game.replayJumpCoreDamaged')],
-      ['CORE_DESTROYED', t('game.replayJumpCoreDestroyed')],
-      ['CORE_RESPAWNED', t('game.replayJumpCoreRespawned')],
-      ['HARVEST_SUCCEEDED', t('game.replayJumpHarvest')],
+    if (!life) return []
+    const lifeFrames = frames.slice(life.startIndex, life.endIndex + 1)
+    const specs: Array<[string, string, (event: GameEvent) => boolean]> = [
+      ['damaged', t('game.replayJumpCoreDamaged'), (event) => event.event_type === 'CORE_DAMAGED' && event.target_id === life.coreId],
+      ['destroyed', t('game.replayJumpCoreDestroyed'), (event) => event.event_type === 'CORE_DESTROYED' && event.target_id === life.coreId],
+      ['respawned', t('game.replayJumpCoreRespawned'), (event) => event.event_type === 'CORE_RESPAWNED' && event.target_id === life.coreId],
+      ['harvest', t('game.replayJumpHarvest'), (event) => event.event_type === 'HARVEST_SUCCEEDED'],
     ]
-    return specs.flatMap(([eventType, label]) => {
-      const target = frames.findIndex((candidate) => candidate.state.events.some((event) => event.event_type === eventType))
+    return specs.flatMap(([kind, label, matches]) => {
+      let target = lifeFrames.findIndex((candidate) => candidate.state.events.some(matches))
+      if (kind === 'destroyed' && target < 0 && life.destruction) target = life.frameCount - 1
       return target >= 0 ? [{ label, index: target }] : []
     })
-  }, [frames, t])
+  }, [frames, life, t])
 
   if (loading) return <ReplayLoading />
-  if (error || !manifest || !frame) return <ReplayError code={error} onRetry={() => void loadCapture(true)} />
+  if (error || !manifest || !frame || !life) return <ReplayError code={error || 'REPLAY_NO_CORE_LIFE'} onRetry={() => void loadCapture(true)} />
 
   const select = (object: WorldObject | null) => {
     setSelectedId(object?.id ?? null)
@@ -120,21 +131,24 @@ export function ReplayPage() {
       <OfficialReplayControl
         manifest={manifest}
         frame={frame}
-        index={index}
-        frameCount={frames.length}
+        lives={lives}
+        life={life}
+        index={localIndex}
+        frameCount={life.frameCount}
         playing={playing}
         intervalMs={intervalMs}
         jumps={jumps}
-        previousTick={index > 0 ? frames[index - 1].tick : null}
+        previousTick={localIndex > 0 ? frames[index - 1].tick : null}
         onTogglePlay={() => setPlaying((current) => !current)}
-        onIndexChange={(next) => { setPlaying(false); setIndex(Math.max(0, Math.min(next, frames.length - 1))) }}
+        onLifeChange={(next) => { const selectedLife = lives[next]; if (selectedLife) { setPlaying(false); setIndex(selectedLife.startIndex) } }}
+        onIndexChange={(next) => { setPlaying(false); setIndex(life.startIndex + Math.max(0, Math.min(next, life.frameCount - 1))) }}
         onIntervalChange={setIntervalMs}
-        onJump={(next) => { setPlaying(false); setIndex(next) }}
+        onJump={(next) => { setPlaying(false); setIndex(life.startIndex + next) }}
       />
       <PendingCommands tick={frame.tick} state={frame.state} receipts={frame.receipts} />
       <WorldCanvas
         state={frame.state}
-        explored={new Map()}
+        explored={explored}
         selectedId={selectedId}
         targeting={false}
         destinationSelecting={false}

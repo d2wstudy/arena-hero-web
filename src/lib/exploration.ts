@@ -25,12 +25,7 @@ export async function loadExplored(namespace: string): Promise<Map<string, Explo
 }
 
 export async function rememberVisible(namespace: string, state: PlayerState): Promise<Map<string, ExploredCell>> {
-  const cells = visibleCells(state.objects)
-  for (const raw of computeVisibility(state)) {
-    if (cells.has(raw)) continue
-    const [x, y] = raw.split(',').map(Number)
-    cells.set(raw, { position: [x, y], kind: 'EMPTY' })
-  }
+  const cells = observedCells(state)
   if (!('indexedDB' in window)) return cells
   const db = await openDB(namespace)
   await new Promise<void>((resolve, reject) => {
@@ -41,6 +36,16 @@ export async function rememberVisible(namespace: string, state: PlayerState): Pr
     transaction.onerror = () => reject(transaction.error)
   })
   db.close()
+  return cells
+}
+
+export function observedCells(state: PlayerState): Map<string, ExploredCell> {
+  const cells = visibleCells(state.objects)
+  for (const raw of computeVisibility(state)) {
+    if (cells.has(raw)) continue
+    const [x, y] = raw.split(',').map(Number)
+    cells.set(raw, { position: [x, y], kind: 'EMPTY' })
+  }
   return cells
 }
 

@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CoreReplayLife } from '../../lib/captureReplay'
 import i18n from '../../lib/i18n'
 import type { CaptureReplayFrame, CaptureReplayManifest } from '../../lib/types'
 import { OfficialReplayControl } from './OfficialReplayControl'
@@ -34,6 +35,30 @@ const frame: CaptureReplayFrame = {
   receipts: {},
 }
 
+const lives: CoreReplayLife[] = [{
+  ordinal: 1,
+  coreId: 'core-1',
+  startIndex: 0,
+  endIndex: 2,
+  startTick: 10,
+  endTick: 13,
+  frameCount: 3,
+  startBoundary: 'CAPTURE_START',
+  endBoundary: 'DESTROYED',
+  destruction: { eventTick: 12, observedTick: 13, reason: 'ATTACK', destroyedBy: ['enemy'], position: [0, 0] },
+}, {
+  ordinal: 2,
+  coreId: 'core-2',
+  startIndex: 3,
+  endIndex: 4,
+  startTick: 14,
+  endTick: 15,
+  frameCount: 2,
+  startBoundary: 'RESPAWNED',
+  endBoundary: 'ONGOING',
+  destruction: null,
+}]
+
 beforeEach(async () => {
   await i18n.changeLanguage('en')
 })
@@ -42,12 +67,15 @@ describe('OfficialReplayControl', () => {
   it('shows a stale open capture as waiting and exposes replay navigation', async () => {
     const user = userEvent.setup()
     const onTogglePlay = vi.fn()
+    const onLifeChange = vi.fn()
     const onIndexChange = vi.fn()
     const onIntervalChange = vi.fn()
     const onJump = vi.fn()
     render(<OfficialReplayControl
       manifest={manifest}
       frame={frame}
+      lives={lives}
+      life={lives[0]}
       index={1}
       frameCount={3}
       playing={false}
@@ -55,6 +83,7 @@ describe('OfficialReplayControl', () => {
       jumps={[{ label: 'Core destroyed', index: 2 }]}
       previousTick={9}
       onTogglePlay={onTogglePlay}
+      onLifeChange={onLifeChange}
       onIndexChange={onIndexChange}
       onIntervalChange={onIntervalChange}
       onJump={onJump}
@@ -62,16 +91,20 @@ describe('OfficialReplayControl', () => {
 
     expect(screen.getByText('WAITING FOR NEW TURNS')).toBeInTheDocument()
     expect(screen.getByText(/1 Tick\(s\) not captured/)).toBeInTheDocument()
+    expect(screen.getByText('LIFE 1 / 2')).toBeInTheDocument()
+    expect(screen.getByText(/Destroyed on resolved Tick 12 by enemy/)).toBeInTheDocument()
     expect(screen.getByText('2 / 3')).toBeInTheDocument()
     expect(screen.getByText('TICK 10 — 13')).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Fast · 4 Ticks / second' })).toBeInTheDocument()
 
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Core life' }), '1')
     await user.click(screen.getByRole('button', { name: 'Play replay' }))
     await user.click(screen.getByRole('button', { name: 'Previous Tick' }))
     await user.click(screen.getByRole('button', { name: 'Next Tick' }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Replay speed' }), '1000')
     await user.click(screen.getByRole('button', { name: 'Core destroyed' }))
 
+    expect(onLifeChange).toHaveBeenCalledWith(1)
     expect(onTogglePlay).toHaveBeenCalledOnce()
     expect(onIndexChange).toHaveBeenNthCalledWith(1, 0)
     expect(onIndexChange).toHaveBeenNthCalledWith(2, 2)
@@ -83,13 +116,16 @@ describe('OfficialReplayControl', () => {
     render(<OfficialReplayControl
       manifest={{ ...manifest, live: true }}
       frame={frame}
+      lives={lives}
+      life={lives[1]}
       index={1}
-      frameCount={3}
+      frameCount={2}
       playing
       intervalMs={250}
       jumps={[]}
       previousTick={10}
       onTogglePlay={vi.fn()}
+      onLifeChange={vi.fn()}
       onIndexChange={vi.fn()}
       onIntervalChange={vi.fn()}
       onJump={vi.fn()}

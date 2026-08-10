@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, CircleAlert, Pause, Play, Radio, RotateCcw, SkipForward } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { CoreReplayLife } from '../../lib/captureReplay'
 import type { CaptureReplayFrame, CaptureReplayManifest } from '../../lib/types'
 
 export interface ReplayJump {
@@ -10,6 +11,8 @@ export interface ReplayJump {
 interface Props {
   manifest: CaptureReplayManifest
   frame: CaptureReplayFrame
+  lives: CoreReplayLife[]
+  life: CoreReplayLife
   index: number
   frameCount: number
   playing: boolean
@@ -17,6 +20,7 @@ interface Props {
   jumps: ReplayJump[]
   previousTick: number | null
   onTogglePlay: () => void
+  onLifeChange: (index: number) => void
   onIndexChange: (index: number) => void
   onIntervalChange: (intervalMs: number) => void
   onJump: (index: number) => void
@@ -29,13 +33,14 @@ const speedOptions = [
   { value: 80, labelKey: 'game.replaySpeedFastest' },
 ] as const
 
-export function OfficialReplayControl({ manifest, frame, index, frameCount, playing, intervalMs, jumps, previousTick, onTogglePlay, onIndexChange, onIntervalChange, onJump }: Props) {
+export function OfficialReplayControl({ manifest, frame, lives, life, index, frameCount, playing, intervalMs, jumps, previousTick, onTogglePlay, onLifeChange, onIndexChange, onIntervalChange, onJump }: Props) {
   const { t, i18n } = useTranslation()
-  const firstTick = manifest.first_tick ?? frame.tick
-  const latestTick = manifest.latest_tick ?? frame.tick
+  const firstTick = life.startTick
+  const latestTick = life.endTick
   const skipped = previousTick !== null && frame.tick > previousTick + 1 ? frame.tick - previousTick - 1 : 0
   const eventCount = frame.state.events.length
   const observedAt = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(frame.observed_at))
+  const lifeNotes = describeLifeBoundary(life, t)
 
   return <div className="pointer-events-none absolute left-3 right-3 top-3 z-30 flex justify-center">
     <section className="panel pointer-events-auto w-full max-w-4xl rounded-gold px-4 py-3" aria-label={t('game.officialReplay')}>
@@ -44,14 +49,22 @@ export function OfficialReplayControl({ manifest, frame, index, frameCount, play
           <p className="flex flex-wrap items-center gap-2 font-mono text-[9px] tracking-[.14em] text-cyan-signal">
             {manifest.open_session ? <Radio size={12} className={manifest.live ? 'text-emerald-300' : 'text-amber-200'} /> : <RotateCcw size={12} />}
             {t('game.officialReplay')} · {manifest.capture} · TICK {frame.tick}
+            <span className="rounded-full bg-violet-400/10 px-2 py-0.5 tracking-normal text-violet-200">{t('game.replayLifeMarker', { number: life.ordinal, count: lives.length })}</span>
             {manifest.open_session && <span className={`rounded-full px-2 py-0.5 tracking-normal ${manifest.live ? 'bg-emerald-400/10 text-emerald-300' : 'bg-amber-300/10 text-amber-200'}`}>{t(manifest.live ? 'game.replayRecording' : 'game.replayWaiting')}</span>}
           </p>
           <p className="mt-1 truncate text-xs text-zinc-400">
             {t('game.replayReadOnly')} · {observedAt}
             {skipped > 0 && <span className="ml-2 text-amber-200">· {t('game.replaySkippedTicks', { count: skipped })}</span>}
           </p>
+          <p className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-zinc-500">
+            <span>{t('game.replayExploredMemory')}</span>
+            {lifeNotes.map((note) => <span key={note} className="text-amber-200">· {note}</span>)}
+          </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <select aria-label={t('game.replayCoreLife')} value={life.ordinal - 1} onChange={(event) => onLifeChange(Number(event.target.value))} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-2 text-[10px] text-zinc-300">
+            {lives.map((candidate) => <option key={candidate.coreId} value={candidate.ordinal - 1}>{t('game.replayCoreLifeOption', { number: candidate.ordinal, start: candidate.startTick, end: candidate.endTick })}</option>)}
+          </select>
           <button type="button" aria-label={playing ? t('game.pauseReplay') : t('game.playReplay')} onClick={onTogglePlay} className="focus-ring flex min-h-11 items-center gap-2 rounded-gold border border-cyan-signal/35 bg-cyan-signal/10 px-3 text-xs font-semibold text-blue-soft hover:bg-cyan-signal/20">
             {playing ? <Pause size={15} /> : <Play size={15} />}{playing ? t('game.pauseReplay') : t('game.playReplay')}
           </button>
@@ -80,4 +93,19 @@ export function OfficialReplayControl({ manifest, frame, index, frameCount, play
       </div>
     </section>
   </div>
+}
+
+function describeLifeBoundary(life: CoreReplayLife, t: (key: string, options?: Record<string, unknown>) => string) {
+  const notes: string[] = []
+  if (life.startBoundary === 'CAPTURE_START') notes.push(t('game.replayLifeCaptureStart'))
+  else if (life.startBoundary === 'AFTER_GAP') notes.push(t('game.replayLifeStartsAfterGap'))
+
+  if (life.destruction) {
+    if (life.destruction.reason === 'SELF_DESTRUCT') notes.push(t('game.replayLifeSelfDestroyed', { tick: life.destruction.eventTick }))
+    else if (life.destruction.destroyedBy.length) notes.push(t('game.replayLifeDestroyedBy', { tick: life.destruction.eventTick, destroyer: life.destruction.destroyedBy.join(', ') }))
+    else notes.push(t('game.replayLifeDestroyed', { tick: life.destruction.eventTick }))
+  } else if (life.endBoundary === 'GAP') notes.push(t('game.replayLifeEndsAtGap'))
+  else if (life.endBoundary === 'CORE_CHANGED') notes.push(t('game.replayLifeCoreChanged'))
+  else if (life.endBoundary === 'CAPTURE_END') notes.push(t('game.replayLifeCaptureEnd'))
+  return notes
 }
