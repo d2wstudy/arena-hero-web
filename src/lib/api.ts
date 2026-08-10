@@ -1,4 +1,4 @@
-import type { APIKeyView, AuthOptions, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
@@ -144,4 +144,13 @@ export const officialApi = {
     headers: { 'X-CSRF-Token': getCSRF('official'), 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify(plan),
   }),
+}
+
+export const replayApi = {
+  manifest: () => localRequest<CaptureReplayManifest>('/api/replay/manifest'),
+  frames: (afterTick?: number, limit = 2000) => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (afterTick !== undefined) query.set('after_tick', String(afterTick))
+    return localRequest<CaptureReplayFramesResponse>(`/api/replay/frames?${query.toString()}`)
+  },
 }

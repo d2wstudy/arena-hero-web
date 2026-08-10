@@ -112,6 +112,51 @@ export interface OfficialAgentSession {
   mode: 'official-agent'
 }
 
+export interface CaptureReplaySession {
+  id: string
+  started_at: string
+  ended_at: string | null
+  sdk_version: string
+  rules_version: string
+  api_version: string
+  base_url: string
+  mode: 'passive' | 'active'
+}
+
+export interface CaptureReplayGap {
+  from_tick: number
+  to_tick: number
+  count: number
+}
+
+export interface CaptureReplayManifest {
+  schema_version: number
+  capture: string
+  open_session: boolean
+  live: boolean
+  sessions: CaptureReplaySession[]
+  frame_count: number
+  ticks: number[]
+  first_tick: number | null
+  latest_tick: number | null
+  gaps: CaptureReplayGap[]
+  latest_observed_at: string | null
+}
+
+export interface CaptureReplayFrame {
+  tick: number
+  session_id: string
+  observed_at: string
+  state: PlayerState
+  receipts: Partial<Record<CommandSource, ReceivedNotice>>
+}
+
+export interface CaptureReplayFramesResponse {
+  frames: CaptureReplayFrame[]
+  has_more: boolean
+  next_after_tick: number | null
+}
+
 export interface LocalBotStatus {
   username: string
   ready: boolean

@@ -12,7 +12,7 @@ interface AuthValue {
 
 const AuthContext = createContext<AuthValue | null>(null)
 
-const SESSIONLESS_DEVELOPMENT_PATHS = new Set(['/demo', '/local', '/official'])
+const SESSIONLESS_DEVELOPMENT_PATHS = new Set(['/demo', '/local', '/official', '/replay'])
 
 export function skipsSessionAuthentication(pathname: string, development = import.meta.env.DEV) {
   const normalized = pathname.replace(/\/+$/, '') || '/'

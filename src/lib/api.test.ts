@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, apiURL, officialApi, setCSRF } from './api'
+import { api, apiURL, officialApi, replayApi, setCSRF } from './api'
 
 describe('API URL', () => {
   it('keeps local development requests relative', () => {
@@ -146,6 +146,18 @@ describe('manual command API', () => {
     expect(path).toBe('/api/official/v1/game/commands')
     expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('official-csrf')
     expect(new Headers(init?.headers).get('Idempotency-Key')).toMatch(/[0-9a-f-]{36}/)
+  })
+
+  it('loads capture replay metadata and paged frames from the local service', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ frame_count: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ frames: [], has_more: false, next_after_tick: 12 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await replayApi.manifest()
+    await replayApi.frames(12, 250)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/replay/manifest')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/replay/frames?limit=250&after_tick=12')
   })
 
   it('starts GitHub linking with a CSRF-protected POST', async () => {
