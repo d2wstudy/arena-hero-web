@@ -165,6 +165,25 @@ describe('LocalArenaPage save flow', () => {
     expect(mocks.createLocalSave).not.toHaveBeenCalled()
   })
 
+  it('shows numbered teams, defaults players to different teams, and can reuse an existing team', async () => {
+    const user = userEvent.setup()
+    render(<LocalArenaPage />)
+
+    await user.click(await screen.findByRole('button', { name: /Empty save 1/i }))
+    await user.click(screen.getByRole('button', { name: /Add the first player/i }))
+    await user.click(screen.getByRole('button', { name: /Add player/i }))
+    const teamInputs = screen.getAllByLabelText('Team')
+    const joinInputs = screen.getAllByLabelText(/Birth time/)
+
+    expect(teamInputs[0]).toHaveDisplayValue('Team 1')
+    expect(teamInputs[1]).toHaveDisplayValue('Team 2')
+    expect(joinInputs[0]).toHaveValue(0)
+    expect(joinInputs[1]).toHaveValue(1)
+
+    await user.selectOptions(teamInputs[1], '1')
+    expect(teamInputs[1]).toHaveDisplayValue('Team 1')
+  })
+
   it('returns a cancelled new-save editor to the catalog after leaving a running save', async () => {
     const secondEmpty = { ...emptySave, slot: 2, save_id: 'save-2', name: 'Empty save 2' }
     mocks.localSaveCatalog.mockResolvedValue({ saves: [occupiedSave, secondEmpty], active_save_id: 'save-1', slot_count: 2 })

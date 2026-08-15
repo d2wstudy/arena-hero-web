@@ -198,6 +198,12 @@ function LocalWorldEditor({ context, onCancel, onCompleted }: { context: EditorC
   }, [context])
 
   const teams = useMemo(() => Array.from(new Set(players.map((player) => player.team))).sort((a, b) => a - b), [players])
+  const nextTeam = useMemo(() => {
+    const occupied = new Set(teams)
+    let candidate = 1
+    while (occupied.has(candidate)) candidate += 1
+    return candidate
+  }, [teams])
   const addPlayer = () => {
     sequenceRef.current += 1
     const number = players.length + 1
@@ -215,7 +221,7 @@ function LocalWorldEditor({ context, onCancel, onCompleted }: { context: EditorC
       controller: 'BOT',
       bot_version: '0.0',
       team,
-      join_offset: 0,
+      join_offset: current.length ? 1 : 0,
       spawn_mode: current.length ? 'RANDOM_ADJACENT' : 'RANDOM',
       distance_n: 1,
       distance_tolerance: 5,
@@ -310,7 +316,7 @@ function LocalWorldEditor({ context, onCancel, onCompleted }: { context: EditorC
           </div>
 
           <div className="mt-4 grid gap-4">
-            {players.map((player, index) => <PlayerEditor key={player.clientKey} player={player} index={index} players={players} onChange={(patch) => updatePlayer(player.clientKey, patch)} onRemove={() => removePlayer(player.clientKey)} />)}
+            {players.map((player, index) => <PlayerEditor key={player.clientKey} player={player} index={index} players={players} teams={teams} nextTeam={nextTeam} onChange={(patch) => updatePlayer(player.clientKey, patch)} onRemove={() => removePlayer(player.clientKey)} />)}
             {!players.length && <button type="button" onClick={addPlayer} className="focus-ring flex min-h-36 flex-col items-center justify-center rounded-gold border border-dashed border-white/12 text-zinc-600 hover:border-cyan-signal/30 hover:text-cyan-signal"><Plus size={20} /><span className="mt-2 text-sm">{t('localSaves.addFirstPlayer')}</span></button>}
           </div>
         </section>
@@ -328,7 +334,7 @@ function LocalWorldEditor({ context, onCancel, onCompleted }: { context: EditorC
   </main>
 }
 
-function PlayerEditor({ player, index, players, onChange, onRemove }: { player: EditorPlayer; index: number; players: EditorPlayer[]; onChange: (patch: Partial<EditorPlayer>) => void; onRemove: () => void }) {
+function PlayerEditor({ player, index, players, teams, nextTeam, onChange, onRemove }: { player: EditorPlayer; index: number; players: EditorPlayer[]; teams: number[]; nextTeam: number; onChange: (patch: Partial<EditorPlayer>) => void; onRemove: () => void }) {
   const { t } = useTranslation()
   const fixedSpawn = player.status === 'ACTIVE' || player.status === 'RESPAWNING'
   const otherPlayers = players.filter((candidate) => candidate.clientKey !== player.clientKey)
@@ -341,7 +347,7 @@ function PlayerEditor({ player, index, players, onChange, onRemove }: { player: 
     <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.username')}</span><input value={player.username} disabled={Boolean(player.id)} maxLength={24} onChange={(event) => onChange({ username: event.target.value.toLowerCase() })} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 text-sm text-zinc-200 disabled:opacity-55" /></label>
       <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.playerType')}</span><select value={player.controller} onChange={(event) => onChange({ controller: event.target.value as 'HUMAN' | 'BOT', bot_version: event.target.value === 'BOT' ? '0.0' : null })} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 text-sm text-zinc-200"><option value="BOT">{t('localSaves.bot')}</option><option value="HUMAN">{t('localSaves.human')}</option></select></label>
-      <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.team')}</span><input type="number" min={1} step={1} value={player.team} onChange={(event) => onChange({ team: Number(event.target.value) })} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 font-mono text-sm text-zinc-200" /></label>
+      <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.team')}</span><select value={player.team} onChange={(event) => onChange({ team: Number(event.target.value) })} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 text-sm text-zinc-200">{teams.map((team) => <option key={team} value={team}>{t('localSaves.teamName', { team })}</option>)}<option value={nextTeam}>{t('localSaves.newTeamName', { team: nextTeam })}</option></select></label>
       {player.controller === 'BOT' && <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.botVersion')}</span><select value="0.0" disabled className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 text-sm text-zinc-400"><option value="0.0">{t('localSaves.baselineV0')}</option></select></label>}
       <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.joinOffset')}</span><input type="number" min={0} step={1} value={player.join_offset} disabled={fixedSpawn} onChange={(event) => onChange({ join_offset: Number(event.target.value) })} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 font-mono text-sm text-zinc-200 disabled:opacity-45" /></label>
       <label className="grid gap-1.5 text-[10px] text-zinc-500"><span>{t('localSaves.spawnMode')}</span><select value={player.spawn_mode} disabled={fixedSpawn} onChange={(event) => onChange({ spawn_mode: event.target.value as LocalSaveSpawnMode, targetKey: event.target.value === 'RANDOM' ? '' : player.targetKey })} className="focus-ring min-h-11 rounded-gold border border-white/10 bg-space-900 px-3 text-sm text-zinc-200 disabled:opacity-45"><option value="RANDOM">{t('localSaves.spawnRandom')}</option><option value="RANDOM_ADJACENT">{t('localSaves.spawnRandomAdjacent')}</option><option value="SPECIFIED">{t('localSaves.spawnSpecified')}</option></select></label>
