@@ -155,6 +155,31 @@ describe('useGameStream WebSocket transport', () => {
     unmount()
   })
 
+  it('starts a bot-only save in its read-only player view without requesting HUMAN', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      if (path === '/api/local/session') return jsonResponse({ csrf_token: 'local-csrf', username: 'bot', mode: 'step', match_id: 'match-1', human_player_id: null, observer_player_id: 'bot-1', observer_only: true, god_mode: true })
+      if (path.startsWith('/api/local/history')) return jsonResponse(localHistory())
+      if (path === '/api/local/match') return jsonResponse({ ...localStatus(), human: 'bot', observer_only: true, participants: [{ id: 'bot-1', username: 'bot', controller: 'BOT', status: 'ACTIVE' }] })
+      if (path.startsWith('/api/local/observe?view=PLAYER')) return jsonResponse(observation('PLAYER', 7, 7, 'bot-1'))
+      if (path.startsWith('/api/local/observe?view=HUMAN')) throw new Error('bot-only saves must not request HUMAN')
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(flush)
+    expect(result.current.localView).toEqual({ mode: 'PLAYER', playerId: 'bot-1' })
+
+    const socket = FakeWebSocket.instances[0]
+    await act(async () => { socket.open(); socket.message({ type: 'tick', data: 7 }); socket.message({ type: 'state', data: demoState }); await flush() })
+
+    const paths = fetchMock.mock.calls.map(([input]) => String(input))
+    expect(paths.some((path) => path.startsWith('/api/local/observe?view=PLAYER'))).toBe(true)
+    expect(paths.some((path) => path.startsWith('/api/local/observe?view=HUMAN'))).toBe(false)
+    expect(result.current.readOnly).toBe(true)
+    unmount()
+  })
+
   it('bootstraps the official proxy before its WebSocket and submits to the Agent slot', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.arenahero.io')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {

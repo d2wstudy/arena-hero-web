@@ -319,6 +319,12 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     if (localMatch) {
       void api.startLocalSession().then((session) => {
         if (stopped) return
+        if (session.observer_only) {
+          if (!session.observer_player_id) throw new Error('observer-only local session is missing its observer player')
+          const observerView: LocalViewSelection = { mode: 'PLAYER', playerId: session.observer_player_id }
+          localViewRef.current = observerView
+          setLocalView(observerView)
+        }
         activeMatchIdRef.current = session.match_id
         setLocalSession(session)
         if (session.match_id) void loadHistory(session.match_id).catch(() => undefined)
@@ -484,7 +490,13 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     }
   }, [localMatch, requestObservation])
 
-  const setGodObservation = useCallback((enabled: boolean) => setLocalObservation(enabled ? { mode: 'GLOBAL' } : { mode: 'HUMAN' }), [setLocalObservation])
+  const setGodObservation = useCallback((enabled: boolean) => {
+    if (enabled) return setLocalObservation({ mode: 'GLOBAL' })
+    if (localSession?.observer_only && localSession.observer_player_id) {
+      return setLocalObservation({ mode: 'PLAYER', playerId: localSession.observer_player_id })
+    }
+    return setLocalObservation({ mode: 'HUMAN' })
+  }, [localSession, setLocalObservation])
 
   const setObservationViewport = useCallback((viewport: LocalChunkViewport) => {
     if (sameViewport(observationViewportRef.current, viewport)) return

@@ -157,6 +157,15 @@ describe('LocalStepControl', () => {
     expect(screen.getByText(/strictly read-only/i)).toBeInTheDocument()
   })
 
+  it('does not offer an invalid human view in a bot-only save', () => {
+    render(<LocalStepControl {...baseProps} status={status(true)} localView={{ mode: 'PLAYER', playerId: 'bot-1' }} observerOnly />)
+    openPanel('View')
+
+    expect(screen.queryByRole('radio', { name: /commander/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /@bot/ })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Global view/ })).toBeInTheDocument()
+  })
+
   it('steps through stored history, labels a Tick, and branches from replay', async () => {
     const replay: LocalReplay = {
       match_id: 'root-match', tick: 4, live: false,

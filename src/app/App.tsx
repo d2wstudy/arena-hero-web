@@ -15,6 +15,7 @@ const ResetPasswordPage = lazy(() => import('../pages/auth/ResetPasswordPage').t
 const GitHubPage = lazy(() => import('../pages/auth/GitHubPage').then((module) => ({ default: module.GitHubPage })))
 const LinuxDOPage = lazy(() => import('../pages/auth/GitHubPage').then((module) => ({ default: module.LinuxDOPage })))
 const ArenaPage = lazy(() => import('../pages/ArenaPage').then((module) => ({ default: module.ArenaPage })))
+const LocalArenaPage = lazy(() => import('../pages/LocalArenaPage').then((module) => ({ default: module.LocalArenaPage })))
 const ReplayPage = lazy(() => import('../pages/ReplayPage').then((module) => ({ default: module.ReplayPage })))
 const TutorialPage = lazy(() => import('../pages/TutorialPage').then((module) => ({ default: module.TutorialPage })))
 const LeaderboardPage = lazy(() => import('../pages/LeaderboardPage').then((module) => ({ default: module.LeaderboardPage })))
@@ -47,7 +48,7 @@ export default function App() {
     </Route>
     {import.meta.env.DEV && <>
       <Route path="/demo" element={<div className="cosmic-bg min-h-dvh pt-0"><ArenaPage demo /></div>} />
-      <Route path="/local" element={<div className="cosmic-bg min-h-dvh pt-0"><ArenaPage local /></div>} />
+      <Route path="/local" element={<div className="cosmic-bg min-h-dvh pt-0"><LocalArenaPage /></div>} />
       <Route path="/official" element={<div className="cosmic-bg min-h-dvh pt-0"><ArenaPage official /></div>} />
       <Route path="/replay" element={<div className="cosmic-bg min-h-dvh pt-0"><ReplayPage /></div>} />
       <Route path="/tutorial-demo" element={<div className="cosmic-bg min-h-dvh pt-0"><TutorialPage preview /></div>} />

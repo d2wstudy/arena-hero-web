@@ -101,10 +101,94 @@ export type LocalMatchMode = 'step' | 'timed'
 
 export interface LocalSession {
   csrf_token: string
-  username: string
+  username: string | null
   mode: LocalMatchMode
   match_id: string | null
+  save_id?: string | null
+  human_player_id?: string | null
+  observer_player_id?: string | null
+  observer_only?: boolean
   god_mode: boolean
+}
+
+export type LocalSaveSeedMode = 'RANDOM' | 'SPECIFIED'
+export type LocalSavePlayerController = 'HUMAN' | 'BOT'
+export type LocalSaveSpawnMode = 'RANDOM' | 'RANDOM_ADJACENT' | 'SPECIFIED'
+export type LocalSaveEditMode = 'OVERWRITE' | 'SAVE_AS'
+
+export interface LocalSaveSummary {
+  slot: number
+  save_id: string
+  name: string
+  match_id: string | null
+  created_at: string
+  updated_at: string
+  latest_tick: number | null
+  seed: string | null
+  player_count: number
+  empty: boolean
+  active: boolean
+}
+
+export interface LocalSaveCatalog {
+  saves: LocalSaveSummary[]
+  active_save_id: string | null
+  slot_count: number
+}
+
+export interface LocalSavePlayerConfig {
+  id?: string
+  username: string
+  controller: LocalSavePlayerController
+  bot_version?: '0.0' | null
+  team: number
+  activation_tick?: number
+  join_offset: number
+  spawn_mode: LocalSaveSpawnMode
+  target_player_id?: string | null
+  target_username?: string | null
+  distance_n: number
+  distance_tolerance?: number
+  planned_position?: Position | null
+  status?: LocalParticipantStatus
+}
+
+export interface LocalSaveConfig {
+  base_tick: number
+  seed: string
+  players: LocalSavePlayerConfig[]
+}
+
+export interface LocalSaveConfigResponse {
+  save: LocalSaveSummary
+  match_id?: string
+  tick?: number
+  config: LocalSaveConfig | null
+}
+
+export interface LocalCreateSaveInput {
+  save_id: string
+  name: string
+  seed_mode: LocalSaveSeedMode
+  seed?: string
+  players: LocalSavePlayerConfig[]
+}
+
+export interface LocalSaveMutationReceipt {
+  accepted: true
+  mode?: LocalSaveEditMode
+  save: LocalSaveSummary
+  match?: LocalMatchSummary
+  match_id?: string
+}
+
+export interface LocalEditSaveInput {
+  save_id: string
+  match_id?: string
+  tick: number
+  mode: LocalSaveEditMode
+  name: string
+  players: LocalSavePlayerConfig[]
 }
 
 export interface OfficialAgentSession {
@@ -187,11 +271,15 @@ export interface LocalMatchStatus {
   tick: number
   phase: 'IDLE' | 'PREPARING' | 'OPEN' | 'RESOLVING' | 'STOPPED'
   human: string
+  human_player_id?: string | null
+  observer_only?: boolean
   bots: LocalBotStatus[]
   match_id: string | null
   root_match_id?: string
   god: LocalGodSettings
   participants: LocalParticipant[]
+  players?: Array<LocalSavePlayerConfig & { status: LocalParticipantStatus }>
+  configuration_error?: { code: string; message: string; details?: unknown }
   label?: LocalTickLabel
 }
 

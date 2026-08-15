@@ -1,4 +1,4 @@
-import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, RotateCcw, Save, Timer, Trash2, User, X } from 'lucide-react'
+import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, FolderOpen, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, RotateCcw, Save, Settings2, Timer, Trash2, User, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalViewSelection, StreamPhase } from '../../lib/types'
@@ -18,6 +18,7 @@ export function LocalStepControl({
   history,
   replay,
   localView,
+  observerOnly = false,
   observationPending,
   godSnapshot,
   onAdvance,
@@ -29,6 +30,8 @@ export function LocalStepControl({
   onHumanFullVision,
   onAddParticipant,
   onSetTickLabel,
+  onEditWorld,
+  onExitToLobby,
 }: {
   tick: number
   liveTick: number
@@ -37,6 +40,7 @@ export function LocalStepControl({
   history: LocalHistory | null
   replay: LocalReplay | null
   localView: LocalViewSelection
+  observerOnly?: boolean
   observationPending: boolean
   godSnapshot: LocalGodSnapshot | null
   onAdvance: () => Promise<unknown>
@@ -48,6 +52,8 @@ export function LocalStepControl({
   onHumanFullVision: (enabled: boolean) => Promise<unknown>
   onAddParticipant: (username: string, controller: 'AGENT' | 'BOT') => Promise<LocalParticipantAdmissionReceipt>
   onSetTickLabel: (matchId: string, tick: number, label: string) => Promise<unknown>
+  onEditWorld?: (tick: number, matchId?: string) => void
+  onExitToLobby?: () => void
 }) {
   const { t } = useTranslation()
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -278,6 +284,8 @@ export function LocalStepControl({
       >
         {busy === 'advance' || phase === 'settling' ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}
       </button>}
+      {onEditWorld && <button type="button" onClick={() => onEditWorld(tick, selectedMatchId ?? undefined)} disabled={controlsLocked} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white disabled:opacity-35" aria-label={t('game.editWorld')} title={t('game.editWorld')}><Settings2 size={14} /></button>}
+      {onExitToLobby && <button type="button" onClick={onExitToLobby} disabled={controlsLocked} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white disabled:opacity-35" aria-label={t('game.returnSaveLobby')} title={t('game.returnSaveLobby')}><FolderOpen size={14} /></button>}
       <button type="button" aria-expanded={drawerOpen} aria-label={t(drawerOpen ? 'game.closeControlPanel' : 'game.openControlPanel')} onClick={() => setDrawerOpen((value) => !value)} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white">
         {drawerOpen ? <X size={15} /> : <Menu size={15} />}
       </button>
@@ -328,7 +336,7 @@ export function LocalStepControl({
           <p className="mt-1 text-[10px] leading-4 text-zinc-500">{t('game.observerViewHint')}</p>
           {observationPending && <p className="mt-3 flex items-center gap-2 rounded-gold bg-cyan-signal/[.06] px-3 py-2 text-[10px] text-cyan-signal"><LoaderCircle size={12} className="animate-spin" />{t('game.observerUpdating')}</p>}
           <div className="mt-3 grid gap-2">
-            <ViewChoice selected={localView.mode === 'HUMAN'} icon={<User size={15} />} title={status?.human ?? t('game.humanView')} detail={t('game.humanViewHint')} onClick={() => void selectView({ mode: 'HUMAN' })} />
+            {!observerOnly && <ViewChoice selected={localView.mode === 'HUMAN'} icon={<User size={15} />} title={status?.human ?? t('game.humanView')} detail={t('game.humanViewHint')} onClick={() => void selectView({ mode: 'HUMAN' })} />}
             {participants.filter((participant) => participant.controller !== 'HUMAN').map((participant) => <ViewChoice key={participant.id} selected={localView.mode === 'PLAYER' && localView.playerId === participant.id} disabled={participant.status === 'PENDING'} icon={<Bot size={15} />} title={`@${participant.username}`} detail={`${t(`game.participant${participant.controller}`)} · ${t(`game.participant${participant.status}`)} · ${t('game.readOnlyView')}`} onClick={() => void selectView({ mode: 'PLAYER', playerId: participant.id })} />)}
             <ViewChoice selected={localView.mode === 'GLOBAL'} icon={<Crown size={15} />} title={t('game.globalView')} detail={t('game.globalViewHint')} accent="amber" onClick={() => void selectView({ mode: 'GLOBAL' })} />
           </div>

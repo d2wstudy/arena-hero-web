@@ -1,10 +1,11 @@
-import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalChunkViewport, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalObservationMode, LocalParticipantAdmissionReceipt, LocalReplay, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
+import type { APIKeyView, AuthOptions, CaptureReplayFramesResponse, CaptureReplayManifest, CommandPlan, Leaderboard, LocalAdvanceReceipt, LocalBranchReceipt, LocalChunkViewport, LocalCreateSaveInput, LocalEditSaveInput, LocalGodOperationReceipt, LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalObservation, LocalObservationMode, LocalParticipantAdmissionReceipt, LocalReplay, LocalSaveCatalog, LocalSaveConfigResponse, LocalSaveMutationReceipt, LocalSession, LocalTickLabelReceipt, OfficialAgentSession, PlayerStats, Receipt, Session, User } from './types'
 
 export class APIError extends Error {
   constructor(
     public readonly code: string,
     public readonly status: number,
     message?: string,
+    public readonly details?: unknown,
   ) {
     super(message || code)
   }
@@ -31,8 +32,8 @@ async function request<T>(path: string, init: RequestInit = {}, baseURL?: string
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const response = await fetch(apiURL(path, baseURL), { ...init, headers, credentials: 'include' })
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string; message?: string }
-    throw new APIError(body.error ?? 'REQUEST_FAILED', response.status, body.message)
+    const body = await response.json().catch(() => ({})) as { error?: string; message?: string; details?: unknown }
+    throw new APIError(body.error ?? 'REQUEST_FAILED', response.status, body.message, body.details)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -60,6 +61,28 @@ export const api = {
     setCSRF(session.csrf_token, 'local')
     return session
   },
+  localSaveCatalog: (signal?: AbortSignal) => localRequest<LocalSaveCatalog>('/api/local/catalog', { signal }),
+  localSaveConfig: (saveId: string, tick?: number, matchId?: string, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ save_id: saveId })
+    if (tick !== undefined) query.set('tick', String(tick))
+    if (matchId) query.set('match_id', matchId)
+    return localRequest<LocalSaveConfigResponse>(`/api/local/save-config?${query.toString()}`, { signal })
+  },
+  createLocalSave: (input: LocalCreateSaveInput) => localRequest<LocalSaveMutationReceipt>('/api/local/save', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF('local') },
+    body: JSON.stringify(input),
+  }),
+  activateLocalSave: (saveId: string) => localRequest<LocalSaveMutationReceipt>('/api/local/activate', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF('local') },
+    body: JSON.stringify({ save_id: saveId }),
+  }),
+  editLocalSave: (input: LocalEditSaveInput) => localRequest<LocalSaveMutationReceipt>('/api/local/edit', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': getCSRF('local') },
+    body: JSON.stringify(input),
+  }),
   localMatch: (signal?: AbortSignal) => localRequest<LocalMatchStatus>('/api/local/match', { signal }),
   localHistory: (matchId?: string, signal?: AbortSignal) => localRequest<LocalHistory>(`/api/local/history${matchId ? `?match_id=${encodeURIComponent(matchId)}` : ''}`, { signal }),
   localReplay: (matchId: string, tick: number, signal?: AbortSignal) => localRequest<LocalReplay>(`/api/local/replay?match_id=${encodeURIComponent(matchId)}&tick=${tick}`, { signal }),
