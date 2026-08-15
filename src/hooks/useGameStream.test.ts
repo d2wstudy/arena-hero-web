@@ -180,6 +180,42 @@ describe('useGameStream WebSocket transport', () => {
     unmount()
   })
 
+  it('refreshes the local session when a scheduled human becomes active', async () => {
+    let sessionCalls = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      if (path === '/api/local/session') {
+        sessionCalls += 1
+        return sessionCalls === 1
+          ? jsonResponse({ csrf_token: 'local-csrf', username: 'bot', mode: 'step', match_id: 'match-1', human_player_id: 'human-1', observer_player_id: 'bot-1', observer_only: true, god_mode: true })
+          : jsonResponse({ csrf_token: 'local-csrf', username: 'late_human', mode: 'step', match_id: 'match-1', human_player_id: 'human-1', observer_player_id: 'human-1', observer_only: false, god_mode: true })
+      }
+      if (path.startsWith('/api/local/history')) return jsonResponse(localHistory(8))
+      if (path === '/api/local/match') return jsonResponse(localStatus(8))
+      if (path.startsWith('/api/local/observe?view=HUMAN')) return jsonResponse(observation('HUMAN', 8, 8))
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true))
+    await act(flush)
+    expect(result.current.localView).toEqual({ mode: 'PLAYER', playerId: 'bot-1' })
+    expect(result.current.readOnly).toBe(true)
+
+    const first = FakeWebSocket.instances[0]
+    await act(async () => { first.serverClose(1012, 'configured human activated'); await flush() })
+    expect(sessionCalls).toBe(2)
+    expect(result.current.localSession?.observer_only).toBe(false)
+    expect(result.current.localView).toEqual({ mode: 'HUMAN' })
+    expect(result.current.readOnly).toBe(false)
+
+    act(() => vi.advanceTimersByTime(250))
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    const second = FakeWebSocket.instances[1]
+    await act(async () => { second.open(); second.message({ type: 'tick', data: 8 }); second.message({ type: 'state', data: demoState }); await flush() })
+    expect(result.current.localSession?.username).toBe('late_human')
+    unmount()
+  })
+
   it('bootstraps the official proxy before its WebSocket and submits to the Agent slot', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.arenahero.io')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {

@@ -108,6 +108,7 @@ export function LocalArenaPage() {
 
   const returnLobby = async () => {
     setScreen('LOBBY')
+    setActiveSave(null)
     setEditor(null)
     setError('')
     try {
@@ -122,7 +123,7 @@ export function LocalArenaPage() {
   }
 
   if (screen === 'EDITOR' && editor) {
-    return <LocalWorldEditor context={editor} onCancel={() => { setEditor(null); setScreen(activeSave ? 'GAME' : 'LOBBY') }} onCompleted={async (save) => {
+    return <LocalWorldEditor context={editor} onCancel={() => { setEditor(null); setScreen(editor.mode === 'EDIT' && activeSave ? 'GAME' : 'LOBBY') }} onCompleted={async (save) => {
       setActiveSave(save)
       setEditor(null)
       setScreen('GAME')
@@ -286,7 +287,7 @@ function LocalWorldEditor({ context, onCancel, onCompleted }: { context: EditorC
   return <main className="relative min-h-dvh px-4 py-6 sm:px-8 lg:px-12">
     <div className="relative z-10 mx-auto max-w-6xl">
       <header className="flex items-start gap-4 border-b border-white/10 pb-6">
-        <button type="button" onClick={onCancel} disabled={busy !== null} className="focus-ring grid size-11 shrink-0 place-items-center rounded-gold border border-white/10 text-zinc-400 hover:bg-white/[.04] hover:text-white"><ChevronLeft size={18} /></button>
+        <button type="button" onClick={onCancel} disabled={busy !== null} aria-label={t('common.cancel')} title={t('common.cancel')} className="focus-ring grid size-11 shrink-0 place-items-center rounded-gold border border-white/10 text-zinc-400 hover:bg-white/[.04] hover:text-white"><ChevronLeft size={18} /></button>
         <div className="min-w-0">
           <p className="eyebrow">{context.mode === 'CREATE' ? 'NEW WORLD' : `WORLD SNAPSHOT · TICK ${baseTick}`}</p>
           <h1 className="mt-2 font-display text-2xl font-semibold tracking-[-.035em] text-zinc-100 sm:text-4xl">{context.mode === 'CREATE' ? t('localSaves.createTitle') : t('localSaves.editTitle')}</h1>

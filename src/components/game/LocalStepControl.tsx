@@ -1,4 +1,4 @@
-import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, FolderOpen, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, RotateCcw, Save, Settings2, Timer, Trash2, User, X } from 'lucide-react'
+import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, FolderOpen, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, RotateCcw, Save, Settings2, Timer, Trash2, User, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalViewSelection, StreamPhase } from '../../lib/types'
@@ -78,7 +78,8 @@ export function LocalStepControl({
   const validAutoTickSeconds = autoTickSecondsText.trim() !== '' && Number.isFinite(autoTickSeconds) && autoTickSeconds >= 0 && autoTickSeconds <= MAX_AUTO_INTERVAL_SECONDS
   const autoTickIntervalMs = validAutoTickSeconds ? autoTickSeconds * 1_000 : 1_000
   const runnerActive = runMode !== 'idle'
-  const readyToAdvance = phase === 'open' && currentStatus?.phase === 'OPEN' && botsReady && busy === null && !replay
+  const configurationError = currentStatus?.configuration_error ?? null
+  const readyToAdvance = phase === 'open' && currentStatus?.phase === 'OPEN' && botsReady && !configurationError && busy === null && !replay
   const resolvingDisabled = !readyToAdvance || runnerActive
   const controlsLocked = busy !== null || runnerActive || phase === 'settling'
   const selectedMatchId = replay?.match_id ?? history?.active_match_id ?? status?.match_id ?? null
@@ -291,6 +292,11 @@ export function LocalStepControl({
       </button>
     </section>
 
+    {configurationError && !replay && <section role="alert" className="panel pointer-events-auto mt-2 w-[min(25rem,calc(100vw-1.5rem))] rounded-gold border border-coral-hostile/30 px-3 py-3 text-xs text-coral-hostile">
+      <div className="flex items-start gap-2.5"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0 flex-1"><p className="font-medium">{configurationError.message}</p><p className="mt-1 text-[10px] leading-4 text-zinc-500">{t('game.configurationErrorHint')}</p></div></div>
+      {onEditWorld && <button type="button" onClick={() => onEditWorld(liveTick, currentStatus?.match_id ?? undefined)} className="secondary-button mt-2 flex min-h-9 w-full items-center justify-center gap-1.5 text-[10px]"><Settings2 size={12} />{t('game.fixWorldConfiguration')}</button>}
+    </section>}
+
     {drawerOpen && <section className="panel pointer-events-auto mt-2 flex max-h-[calc(100dvh-5rem)] w-[min(25rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-gold shadow-2xl max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:top-auto max-sm:mt-0 max-sm:max-h-[72dvh] max-sm:w-auto" aria-label={t('game.localControlPanel')}>
       <header className="flex items-center justify-between gap-3 border-b border-white/[.07] px-4 py-3">
         <div className="min-w-0">
@@ -366,7 +372,7 @@ export function LocalStepControl({
           </> : <p className="mt-4 rounded-gold bg-white/[.025] px-3 py-4 text-center text-[10px] text-zinc-500">{t('game.historyLoading')}</p>}
         </div>}
 
-        {activeTab === 'lab' && <GodModeConsole snapshot={godSnapshot} humanFullVision={humanFullVision} replaying={Boolean(replay)} disabled={controlsLocked} participants={participants} onRefresh={onLoadGodDiagnostics} onHumanFullVision={onHumanFullVision} onAddParticipant={onAddParticipant} />}
+        {activeTab === 'lab' && <GodModeConsole snapshot={godSnapshot} humanFullVision={humanFullVision} replaying={Boolean(replay)} disabled={controlsLocked} participants={participants} onRefresh={onLoadGodDiagnostics} onHumanFullVision={onHumanFullVision} onAddParticipant={onEditWorld ? undefined : onAddParticipant} />}
       </div>
     </section>}
   </div>

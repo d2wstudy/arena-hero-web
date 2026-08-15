@@ -23,9 +23,10 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('../lib/api', () => ({ api: mocks, APIError: mocks.MockAPIError }))
 vi.mock('./ArenaPage', () => ({
-  ArenaPage: ({ onLocalEdit }: { onLocalEdit?: (tick: number, matchId?: string) => void }) => <div>
+  ArenaPage: ({ onLocalEdit, onLocalExit }: { onLocalEdit?: (tick: number, matchId?: string) => void; onLocalExit?: () => void }) => <div>
     <div>LOCAL GAME</div>
     {onLocalEdit && <button type="button" onClick={() => onLocalEdit(7, 'branch-match')}>EDIT LOCAL</button>}
+    {onLocalExit && <button type="button" onClick={onLocalExit}>EXIT LOCAL</button>}
   </div>,
 }))
 
@@ -162,5 +163,21 @@ describe('LocalArenaPage save flow', () => {
     expect(screen.getByText(/at most one human player/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Create and enter/i })).toBeDisabled()
     expect(mocks.createLocalSave).not.toHaveBeenCalled()
+  })
+
+  it('returns a cancelled new-save editor to the catalog after leaving a running save', async () => {
+    const secondEmpty = { ...emptySave, slot: 2, save_id: 'save-2', name: 'Empty save 2' }
+    mocks.localSaveCatalog.mockResolvedValue({ saves: [occupiedSave, secondEmpty], active_save_id: 'save-1', slot_count: 2 })
+    mocks.activateLocalSave.mockResolvedValue({ accepted: true, save: { ...occupiedSave, active: true }, match_id: 'head-match' })
+    const user = userEvent.setup()
+    render(<LocalArenaPage />)
+
+    await user.click(await screen.findByRole('button', { name: /Existing world/i }))
+    await user.click(await screen.findByRole('button', { name: 'EXIT LOCAL' }))
+    await user.click(await screen.findByRole('button', { name: /Empty save 2/i }))
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.getByRole('heading', { name: 'Local worlds' })).toBeInTheDocument()
+    expect(screen.queryByText('LOCAL GAME')).not.toBeInTheDocument()
   })
 })

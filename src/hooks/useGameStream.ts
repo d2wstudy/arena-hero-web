@@ -181,6 +181,22 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     let connecting = false
     let stopped = false
 
+    const applyLocalSession = (session: LocalSession) => {
+      if (session.observer_only) {
+        if (!session.observer_player_id) throw new Error('observer-only local session is missing its observer player')
+        const observerView: LocalViewSelection = { mode: 'PLAYER', playerId: session.observer_player_id }
+        localViewRef.current = observerView
+        setLocalView(observerView)
+      } else {
+        localViewRef.current = { mode: 'HUMAN' }
+        setLocalView({ mode: 'HUMAN' })
+        setObservation(null)
+      }
+      activeMatchIdRef.current = session.match_id
+      setLocalSession(session)
+      if (session.match_id) void loadHistory(session.match_id).catch(() => undefined)
+    }
+
     const scheduleReconnect = () => {
       if (stopped || reconnectTimer !== null) return
       const delay = reconnectDelay(reconnectAttempt)
@@ -290,6 +306,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
           setError(officialAgent ? 'OFFICIAL_AGENT_UNAUTHORIZED' : 'UNAUTHORIZED')
           return
         }
+        if (localMatch && event.code === 1012) {
+          void api.startLocalSession().then((session) => {
+            if (stopped) return
+            applyLocalSession(session)
+            scheduleReconnect()
+          }).catch((cause) => {
+            if (stopped) return
+            setError(cause instanceof APIError ? cause.code : 'REQUEST_FAILED')
+          })
+          return
+        }
         if (officialAgent && [1006, 1011, 1013].includes(event.code)) setError('OFFICIAL_PROXY_UNAVAILABLE')
         scheduleReconnect()
       }
@@ -319,15 +346,7 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     if (localMatch) {
       void api.startLocalSession().then((session) => {
         if (stopped) return
-        if (session.observer_only) {
-          if (!session.observer_player_id) throw new Error('observer-only local session is missing its observer player')
-          const observerView: LocalViewSelection = { mode: 'PLAYER', playerId: session.observer_player_id }
-          localViewRef.current = observerView
-          setLocalView(observerView)
-        }
-        activeMatchIdRef.current = session.match_id
-        setLocalSession(session)
-        if (session.match_id) void loadHistory(session.match_id).catch(() => undefined)
+        applyLocalSession(session)
         connect()
       }).catch((cause) => {
         if (stopped) return

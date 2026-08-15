@@ -20,7 +20,7 @@ export function GodModeConsole({
   participants: LocalParticipant[]
   onRefresh: () => Promise<unknown>
   onHumanFullVision: (enabled: boolean) => Promise<unknown>
-  onAddParticipant: (username: string, controller: 'AGENT' | 'BOT') => Promise<LocalParticipantAdmissionReceipt>
+  onAddParticipant?: (username: string, controller: 'AGENT' | 'BOT') => Promise<LocalParticipantAdmissionReceipt>
 }) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState<'diagnostics' | 'vision' | 'participant' | null>(null)
@@ -50,7 +50,7 @@ export function GodModeConsole({
 
   const addParticipant = async () => {
     const normalized = username.trim()
-    if (busy || replaying || !/^[a-z0-9_]{3,24}$/.test(normalized)) return
+    if (!onAddParticipant || busy || replaying || !/^[a-z0-9_]{3,24}$/.test(normalized)) return
     setBusy('participant')
     try {
       await onAddParticipant(normalized, controller)
@@ -92,11 +92,11 @@ export function GodModeConsole({
     <div className="mt-4 border-t border-white/[.07] pt-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="flex items-center gap-2 text-[10px] font-medium text-zinc-300"><UserPlus size={13} />{t('game.addParticipant')}</p>
-          <p className="mt-1 text-[10px] leading-4 text-zinc-500">{t(replaying ? 'game.addParticipantReplayHint' : 'game.addParticipantHint')}</p>
+          <p className="flex items-center gap-2 text-[10px] font-medium text-zinc-300"><UserPlus size={13} />{t(onAddParticipant ? 'game.addParticipant' : 'game.managePlayers')}</p>
+          <p className="mt-1 text-[10px] leading-4 text-zinc-500">{t(onAddParticipant ? replaying ? 'game.addParticipantReplayHint' : 'game.addParticipantHint' : 'game.managePlayersHint')}</p>
         </div>
       </div>
-      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
+      {onAddParticipant && <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
         <input
           aria-label={t('game.participantUsername')}
           value={username}
@@ -126,7 +126,7 @@ export function GodModeConsole({
           {busy === 'participant' ? <LoaderCircle size={13} className="animate-spin" /> : <UserPlus size={13} />}
           {t('game.add')}
         </button>
-      </div>
+      </div>}
 
       <div className="mt-3 max-h-40 space-y-1 overflow-y-auto pr-1">
         {participants.map((participant) => <div key={participant.id} className="rounded-gold bg-white/[.025] px-2.5 py-2 text-[9px]">

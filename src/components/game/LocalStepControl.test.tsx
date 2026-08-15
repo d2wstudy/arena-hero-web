@@ -181,7 +181,7 @@ describe('LocalStepControl', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Next Tick' }))
     expect(showReplay).toHaveBeenCalledWith('root-match', 5)
-    await userEvent.click(screen.getByRole('button', { name: 'Branch from Tick 4' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Edit from Tick 4' }))
     expect(branch).toHaveBeenCalledOnce()
     await userEvent.clear(screen.getByRole('textbox', { name: 'Tick label' }))
     await userEvent.type(screen.getByRole('textbox', { name: 'Tick label' }), 'Before battle')
@@ -214,5 +214,34 @@ describe('LocalStepControl', () => {
     }} onLoadGodDiagnostics={diagnostics} onHumanFullVision={fullVision} onAddParticipant={addParticipant} />)
     expect(screen.getByRole('switch', { name: 'Human full vision' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  })
+
+  it('keeps an invalid scheduled spawn paused and opens the world editor to fix it', async () => {
+    const editWorld = vi.fn()
+    render(<LocalStepControl
+      {...baseProps}
+      status={{
+        ...status(true),
+        configuration_error: {
+          code: 'SPAWN_PLAN_INVALIDATED',
+          message: 'late_bot 的预定出生位置已不再合法',
+        },
+      }}
+      onEditWorld={editWorld}
+    />)
+
+    expect(screen.getByRole('button', { name: 'Resolve Tick 7' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('late_bot 的预定出生位置已不再合法')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit player configuration' }))
+    expect(editWorld).toHaveBeenCalledWith(7, 'root-match')
+  })
+
+  it('routes save-world player management through the paused editor', () => {
+    render(<LocalStepControl {...baseProps} status={status(true)} onEditWorld={vi.fn()} />)
+    openPanel('Lab')
+
+    expect(screen.getByText('Manage save players')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Participant username' })).not.toBeInTheDocument()
+    expect(screen.getByText(/use Edit paused world/i)).toBeInTheDocument()
   })
 })
