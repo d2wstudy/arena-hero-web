@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TeamFogLayer } from '../../lib/teamFog'
 import type { WorldObject } from '../../lib/types'
-import { canvasPixelRatio, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell } from '../../lib/worldCanvasPerformance'
+import { canvasPixelRatio, observationChunkViewport, pinchZoomCell, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell, zoomCameraAtViewportPoint } from '../../lib/worldCanvasPerformance'
 import { bindMapWheelZoom, drawTeamFog } from './WorldCanvas'
 
 const fogLayer: TeamFogLayer = {
@@ -63,6 +63,38 @@ describe('wheelZoomCell', () => {
     expect(zoomedOut).toBe(12)
     expect(wheelZoomCell(12, 10_000, 0, 720)).toBe(12)
     expect(wheelZoomCell(78, -10_000, 0, 720)).toBe(78)
+  })
+})
+
+describe('pinchZoomCell', () => {
+  it('tracks continuous touchpad scale deltas more closely than the mouse wheel curve', () => {
+    expect(pinchZoomCell(44, -10, 0, 720)).toBeCloseTo(44 * Math.exp(.1), 8)
+    expect(pinchZoomCell(44, -10, 0, 720) - 44).toBeGreaterThan(44 - wheelZoomCell(44, 10, 0, 720))
+  })
+
+  it('clamps large gesture spikes to the supported map scale', () => {
+    expect(pinchZoomCell(12, 10_000, 0, 720)).toBe(12)
+    expect(pinchZoomCell(78, -10_000, 0, 720)).toBe(78)
+  })
+})
+
+describe('zoomCameraAtViewportPoint', () => {
+  it('keeps the world position below the pinch centroid stationary', () => {
+    const camera = { x: 10, y: -4, cell: 40 }
+    const viewport = { width: 800, height: 600 }
+    const point = { x: 700, y: 100 }
+    const next = zoomCameraAtViewportPoint(camera, 50, point, viewport)
+    const worldBefore = {
+      x: camera.x + (point.x - viewport.width / 2) / camera.cell,
+      y: camera.y + (point.y - viewport.height / 2) / camera.cell,
+    }
+    const worldAfter = {
+      x: next.x + (point.x - viewport.width / 2) / next.cell,
+      y: next.y + (point.y - viewport.height / 2) / next.cell,
+    }
+
+    expect(worldAfter.x).toBeCloseTo(worldBefore.x, 10)
+    expect(worldAfter.y).toBeCloseTo(worldBefore.y, 10)
   })
 })
 

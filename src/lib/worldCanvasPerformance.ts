@@ -7,6 +7,8 @@ const CANVAS_PIXEL_RATIO_STEP = 0.25
 const WHEEL_LINE_PIXELS = 16
 const MAX_WHEEL_PIXELS_PER_EVENT = 160
 const WHEEL_ZOOM_SENSITIVITY = 0.0015
+const MAX_PINCH_PIXELS_PER_EVENT = 40
+const PINCH_ZOOM_SENSITIVITY = 0.01
 
 export const MIN_WORLD_CELL_SIZE = 12
 export const MAX_WORLD_CELL_SIZE = 78
@@ -38,14 +40,40 @@ export function canvasPixelRatio(size: { width: number; height: number }, device
 }
 
 export function wheelZoomCell(cell: number, deltaY: number, deltaMode: number, viewportHeight: number) {
-  const modePixels = deltaMode === 1
+  const modePixels = wheelDeltaPixels(deltaY, deltaMode, viewportHeight)
+  const pixels = Math.max(-MAX_WHEEL_PIXELS_PER_EVENT, Math.min(MAX_WHEEL_PIXELS_PER_EVENT, modePixels))
+  const next = cell * Math.exp(-pixels * WHEEL_ZOOM_SENSITIVITY)
+  return Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, next))
+}
+
+export function pinchZoomCell(cell: number, deltaY: number, deltaMode: number, viewportHeight: number) {
+  const modePixels = wheelDeltaPixels(deltaY, deltaMode, viewportHeight)
+  const pixels = Math.max(-MAX_PINCH_PIXELS_PER_EVENT, Math.min(MAX_PINCH_PIXELS_PER_EVENT, modePixels))
+  const next = cell * Math.exp(-pixels * PINCH_ZOOM_SENSITIVITY)
+  return Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, next))
+}
+
+export function zoomCameraAtViewportPoint(
+  camera: WorldCamera,
+  nextCell: number,
+  point: { x: number; y: number },
+  viewport: { width: number; height: number },
+): WorldCamera {
+  const offsetX = point.x - viewport.width / 2
+  const offsetY = point.y - viewport.height / 2
+  return {
+    x: camera.x + offsetX / camera.cell - offsetX / nextCell,
+    y: camera.y + offsetY / camera.cell - offsetY / nextCell,
+    cell: nextCell,
+  }
+}
+
+function wheelDeltaPixels(deltaY: number, deltaMode: number, viewportHeight: number) {
+  return deltaMode === 1
     ? deltaY * WHEEL_LINE_PIXELS
     : deltaMode === 2
       ? deltaY * Math.max(1, viewportHeight)
       : deltaY
-  const pixels = Math.max(-MAX_WHEEL_PIXELS_PER_EVENT, Math.min(MAX_WHEEL_PIXELS_PER_EVENT, modePixels))
-  const next = cell * Math.exp(-pixels * WHEEL_ZOOM_SENSITIVITY)
-  return Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, next))
 }
 
 export function terrainRenderProfile(cell: number, pixelRatio: number): TerrainRenderProfile {

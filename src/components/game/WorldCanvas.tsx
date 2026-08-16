@@ -17,7 +17,7 @@ import type { LocalChunkViewport, LocalMovementPurpose, LocalPlayerFog, LocalTac
 import { UNIT_SPRITE_PATHS, unitArtType, unitSpriteRect, type UnitArtType } from '../../lib/unitArt'
 import { computeVisibility, positionKey } from '../../lib/visibility'
 import { WORLD_BACKGROUND_PATH } from '../../lib/worldArt'
-import { canvasPixelRatio, MAX_WORLD_CELL_SIZE, MIN_WORLD_CELL_SIZE, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell, WORLD_OVERVIEW_CELL_SIZE, type WorldCamera } from '../../lib/worldCanvasPerformance'
+import { canvasPixelRatio, MAX_WORLD_CELL_SIZE, MIN_WORLD_CELL_SIZE, observationChunkViewport, pinchZoomCell, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell, WORLD_OVERVIEW_CELL_SIZE, zoomCameraAtViewportPoint, type WorldCamera } from '../../lib/worldCanvasPerformance'
 import { BeaconDirectionIndicator } from './BeaconDirectionIndicator'
 import { MapFeatureInfo } from './MapFeatureInfo'
 import type { MapAnchor } from './UnitActionDialog'
@@ -234,8 +234,8 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     setCamera(next)
     onCameraChange?.({ ...next })
   }, [onCameraChange])
-  const scheduleZoom = useCallback((nextCell: (current: number) => number) => {
-    scheduleCamera((current) => ({ ...current, cell: nextCell(current.cell) }))
+  const scheduleZoom = useCallback((update: (current: Camera) => Camera) => {
+    scheduleCamera(update)
     if (zoomEndTimeoutRef.current !== null) window.clearTimeout(zoomEndTimeoutRef.current)
     zoomEndTimeoutRef.current = window.setTimeout(() => {
       zoomEndTimeoutRef.current = null
@@ -319,15 +319,36 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     setCameraImmediately((current) => ({ ...current, x: core.position![0], y: core.position![1] }))
   }, [centerPosition, centerRequest, entities, setCameraImmediately, state.view_mode])
   useEffect(() => {
-    if (zoomRequest) scheduleZoom((current) => Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, current + Math.sign(zoomRequest) * 8)))
+    if (zoomRequest) scheduleZoom((current) => ({
+      ...current,
+      cell: Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, current.cell + Math.sign(zoomRequest) * 8)),
+    }))
   }, [scheduleZoom, zoomRequest])
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    return bindMapWheelZoom(container, ({ deltaY, deltaMode }) => {
-      scheduleZoom((current) => wheelZoomCell(current, deltaY, deltaMode, size.height))
+    return bindMapWheelZoom(container, (event) => {
+      const { deltaY, deltaMode } = event
+      if (!event.ctrlKey) {
+        scheduleZoom((current) => ({ ...current, cell: wheelZoomCell(current.cell, deltaY, deltaMode, size.height) }))
+        return
+      }
+      const rect = container.getBoundingClientRect()
+      const reportedPoint = event.clientX !== 0 || event.clientY !== 0
+      const point = reportedPoint
+        ? {
+            x: Math.min(size.width, Math.max(0, event.clientX - rect.left)),
+            y: Math.min(size.height, Math.max(0, event.clientY - rect.top)),
+          }
+        : { x: size.width / 2, y: size.height / 2 }
+      scheduleZoom((current) => zoomCameraAtViewportPoint(
+        current,
+        pinchZoomCell(current.cell, deltaY, deltaMode, size.height),
+        point,
+        size,
+      ))
     })
-  }, [scheduleZoom, size.height])
+  }, [scheduleZoom, size])
   useLayoutEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || size.width <= 0 || size.height <= 0) return
