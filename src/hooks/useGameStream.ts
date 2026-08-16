@@ -40,6 +40,20 @@ function observationMatchesView(observation: LocalObservation, view: LocalViewSe
     && (view.mode !== 'PLAYER' || observation.view.player_id === view.playerId)
 }
 
+function localSessionView(session: LocalSession, preferred: LocalViewSelection | null): LocalViewSelection {
+  if (!session.observer_only) return preferred ?? { mode: 'HUMAN' }
+  if (preferred?.mode === 'GLOBAL' || preferred?.mode === 'PLAYER') return preferred
+  if (!session.observer_player_id) throw new Error('observer-only local session is missing its observer player')
+  return { mode: 'PLAYER', playerId: session.observer_player_id }
+}
+
+function availableLocalView(view: LocalViewSelection, session: LocalSession, status: LocalMatchStatus): LocalViewSelection {
+  if (view.mode === 'GLOBAL') return view
+  if (view.mode === 'HUMAN' && !session.observer_only) return view
+  if (view.mode === 'PLAYER' && status.participants.some((participant) => participant.id === view.playerId && participant.status !== 'PENDING')) return view
+  return localSessionView(session, null)
+}
+
 function sameViewport(left: LocalChunkViewport | null, right: LocalChunkViewport) {
   return left?.min_chunk_x === right.min_chunk_x
     && left.max_chunk_x === right.max_chunk_x
@@ -61,7 +75,7 @@ function compactExploredMap(document: LocalCompactExploration) {
   return cells
 }
 
-export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false, officialAgent = false) {
+export function useGameStream(demo = false, explorationNamespace = 'anonymous', localMatch = false, officialAgent = false, initialLocalView?: LocalViewSelection, initialObservationViewport?: LocalChunkViewport) {
   const [liveTick, setLiveTick] = useState<number | null>(demo ? 10583 : null)
   const [liveState, setLiveState] = useState<PlayerState | null>(demo ? demoState : null)
   const [phase, setPhase] = useState<StreamPhase>(demo ? 'open' : 'connecting')
@@ -73,15 +87,17 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   const [localStatus, setLocalStatus] = useState<LocalMatchStatus | null>(null)
   const [localHistory, setLocalHistory] = useState<LocalHistory | null>(null)
   const [replay, setReplay] = useState<LocalReplay | null>(null)
-  const [localView, setLocalView] = useState<LocalViewSelection>({ mode: 'HUMAN' })
+  const [localView, setLocalView] = useState<LocalViewSelection>(() => initialLocalView ?? { mode: 'HUMAN' })
   const [observation, setObservation] = useState<LocalObservation | null>(null)
   const [observationPending, setObservationPending] = useState(false)
   const [godSnapshot, setGodSnapshot] = useState<LocalGodSnapshot | null>(null)
   const tickRef = useRef<number | null>(liveTick)
   const activeMatchIdRef = useRef<string | null>(null)
   const replayRef = useRef<LocalReplay | null>(null)
-  const localViewRef = useRef<LocalViewSelection>({ mode: 'HUMAN' })
-  const observationViewportRef = useRef<LocalChunkViewport | null>(null)
+  const localViewRef = useRef<LocalViewSelection>(initialLocalView ?? { mode: 'HUMAN' })
+  const preferredLocalViewRef = useRef<LocalViewSelection | null>(initialLocalView ?? null)
+  const localSessionRef = useRef<LocalSession | null>(null)
+  const observationViewportRef = useRef<LocalChunkViewport | null>(initialObservationViewport ?? null)
   const historyRef = useRef<LocalHistory | null>(null)
   const humanExplorationMatchRef = useRef<string | null>(null)
   const replayRequestRef = useRef(0)
@@ -182,16 +198,11 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
     let stopped = false
 
     const applyLocalSession = (session: LocalSession) => {
-      if (session.observer_only) {
-        if (!session.observer_player_id) throw new Error('observer-only local session is missing its observer player')
-        const observerView: LocalViewSelection = { mode: 'PLAYER', playerId: session.observer_player_id }
-        localViewRef.current = observerView
-        setLocalView(observerView)
-      } else {
-        localViewRef.current = { mode: 'HUMAN' }
-        setLocalView({ mode: 'HUMAN' })
-        setObservation(null)
-      }
+      const nextView = localSessionView(session, preferredLocalViewRef.current)
+      localSessionRef.current = session
+      localViewRef.current = nextView
+      setLocalView(nextView)
+      if (nextView.mode === 'HUMAN') setObservation(null)
       activeMatchIdRef.current = session.match_id
       setLocalSession(session)
       if (session.match_id) void loadHistory(session.match_id).catch(() => undefined)
@@ -261,7 +272,15 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
                   return nextHistory
                 })
                 if (replayRef.current) return
-                const view = localViewRef.current
+                const session = localSessionRef.current
+                const previousView = localViewRef.current
+                const view = session ? availableLocalView(previousView, session, status) : previousView
+                if (!sameView(previousView, view)) {
+                  if (preferredLocalViewRef.current && sameView(preferredLocalViewRef.current, previousView)) preferredLocalViewRef.current = view
+                  localViewRef.current = view
+                  setLocalView(view)
+                  if (view.mode === 'HUMAN') setObservation(null)
+                }
                 if (view.mode !== 'HUMAN') {
                   void requestObservation(view, matchId, stateTick).catch(() => undefined)
                   return
@@ -487,7 +506,11 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
   const setLocalObservation = useCallback(async (nextView: LocalViewSelection) => {
     if (!localMatch) throw new Error('local observation unavailable')
     const previous = localViewRef.current
-    if (sameView(previous, nextView)) return null
+    const previousPreferred = preferredLocalViewRef.current
+    if (sameView(previous, nextView)) {
+      preferredLocalViewRef.current = nextView
+      return null
+    }
     localViewRef.current = nextView
     setLocalView(nextView)
     setError('')
@@ -496,14 +519,18 @@ export function useGameStream(demo = false, explorationNamespace = 'anonymous', 
       observationRequestRef.current += 1
       observationAbortRef.current?.abort()
       setObservationPending(false)
+      preferredLocalViewRef.current = nextView
       return null
     }
     const matchId = selected?.match_id ?? activeMatchIdRef.current
     const selectedTick = selected?.tick ?? tickRef.current
     try {
-      return await requestObservation(nextView, matchId, selectedTick)
+      const result = await requestObservation(nextView, matchId, selectedTick)
+      preferredLocalViewRef.current = nextView
+      return result
     } catch (cause) {
       localViewRef.current = previous
+      preferredLocalViewRef.current = previousPreferred
       setLocalView(previous)
       throw cause
     }

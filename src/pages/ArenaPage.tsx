@@ -17,17 +17,39 @@ import { directionTo, moveTargets, plannedMoveArrows } from '../lib/movementPrev
 import { getErrorMessage } from '../lib/errorMessage'
 import { getActionAvailability } from '../lib/actionAvailability'
 import { coreDestructionFromEvents } from '../lib/destruction'
+import { defaultLocalWorkspaceState, localWorkspaceStorageKey, readLocalWorkspaceState, type LocalControlWorkspace, type LocalWorkspaceState } from '../lib/localWorkspace'
 import { applyAutonomousMovement, buildMovementRoutes, findMovementPath, reachableMovementDestinations, readMovementGoals, type MovementGoals, type PathFailure } from '../lib/pathfinding'
 import { mergeCommandPlans, prepareUnitActionPlan } from '../lib/commandPlans'
 import { readTeamFogDisplaySettings, TEAM_FOG_DISPLAY_STORAGE_KEY } from '../lib/teamFogDisplay'
-import type { CommandPlan, CoreAction, Position, UnitAction, WorldObject } from '../lib/types'
+import type { CommandPlan, CoreAction, LocalViewSelection, Position, UnitAction, WorldObject } from '../lib/types'
 import { positionKey } from '../lib/visibility'
+import { observationChunkViewport } from '../lib/worldCanvasPerformance'
 
 export function ArenaPage({ demo = false, local = false, official = false, localSaveId, onLocalExit, onLocalEdit }: { demo?: boolean; local?: boolean; official?: boolean; localSaveId?: string; onLocalExit?: () => void; onLocalEdit?: (tick: number, matchId?: string) => void }) {
-  const { t } = useTranslation(); const { user } = useAuth(); const playerNamespace = demo ? 'demo' : local ? `local:${localSaveId ?? 'legacy'}` : official ? 'official-agent' : user?.username ?? 'anonymous'; const game = useGameStream(demo, playerNamespace, local, official)
+  const { t } = useTranslation()
+  const { user } = useAuth()
+  const playerNamespace = demo ? 'demo' : local ? `local:${localSaveId ?? 'legacy'}` : official ? 'official-agent' : user?.username ?? 'anonymous'
+  const workspaceEnabled = local && Boolean(localSaveId)
+  const workspaceKey = workspaceEnabled ? localWorkspaceStorageKey(localSaveId!) : null
+  const [initialWorkspace] = useState<LocalWorkspaceState>(() => workspaceKey ? readLocalWorkspaceState(localStorage.getItem(workspaceKey)) : defaultLocalWorkspaceState())
+  const [localWorkspace, setLocalWorkspace] = useState<LocalWorkspaceState>(initialWorkspace)
+  const [initialObservationViewport] = useState(() => workspaceEnabled && initialWorkspace.view.mode === 'GLOBAL' && initialWorkspace.camera
+    ? observationChunkViewport(initialWorkspace.camera, {
+        width: Math.max(1, window.innerWidth - (window.innerWidth >= 1024 ? 260 : 0)),
+        height: Math.max(1, window.innerHeight),
+      })
+    : undefined)
+  const localWorkspaceRef = useRef(localWorkspace)
+  const workspaceSaveTimerRef = useRef<number | null>(null)
+  const restoreStartedRef = useRef(false)
+  const [workspaceRestored, setWorkspaceRestored] = useState(!workspaceEnabled)
+  const game = useGameStream(demo, playerNamespace, local, official, workspaceEnabled ? initialWorkspace.view : undefined, initialObservationViewport)
+  const setGameLocalObservation = game.setLocalObservation
+  const showGameReplay = game.showReplay
+  const returnGameLive = game.returnLive
   const submitGamePlan = game.submit
   const movementStorageKey = `arena-hero.movement-goals.${playerNamespace}`
-  const [selectedId, setSelectedId] = useState<string | null>(null); const [targetMode, setTargetMode] = useState<'SHOOT' | 'SWEEP' | null>(null); const [moveSelecting, setMoveSelecting] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(workspaceEnabled ? initialWorkspace.selectedObjectId : null); const [targetMode, setTargetMode] = useState<'SHOOT' | 'SWEEP' | null>(null); const [moveSelecting, setMoveSelecting] = useState(false)
   const [movementError, setMovementError] = useState<PathFailure | null>(null)
   const [anchor, setAnchor] = useState<MapAnchor | null>(null)
   const destroyerStorageKey = `arena-hero.core-destroyer.${playerNamespace}`
@@ -42,6 +64,41 @@ export function ArenaPage({ demo = false, local = false, official = false, local
   const planRef = useRef(plan); const tickRef = useRef(game.tick); const submitQueueRef = useRef<Promise<void>>(Promise.resolve()); const movementGoalsRef = useRef(movementGoals); const autoMovementTickRef = useRef<number | null>(null)
   const respawning = game.state?.status === 'RESPAWNING'
   const readOnly = game.readOnly
+  const updateLocalWorkspace = useCallback((patch: Partial<LocalWorkspaceState>) => {
+    if (!workspaceEnabled) return
+    const next = { ...localWorkspaceRef.current, ...patch }
+    localWorkspaceRef.current = next
+    setLocalWorkspace(next)
+  }, [workspaceEnabled])
+  const flushLocalWorkspace = useCallback(() => {
+    if (!workspaceKey) return
+    localStorage.setItem(workspaceKey, JSON.stringify(localWorkspaceRef.current))
+  }, [workspaceKey])
+  const updateControlWorkspace = useCallback((control: LocalControlWorkspace) => updateLocalWorkspace({ control }), [updateLocalWorkspace])
+  const updateTeamFilter = useCallback((selectedTeam: number | null) => updateLocalWorkspace({ selectedTeam }), [updateLocalWorkspace])
+  const updateCameraWorkspace = useCallback((camera: NonNullable<LocalWorkspaceState['camera']>) => updateLocalWorkspace({ camera }), [updateLocalWorkspace])
+  const selectObservation = useCallback(async (view: LocalViewSelection) => {
+    const result = await setGameLocalObservation(view)
+    updateLocalWorkspace({ view })
+    return result
+  }, [setGameLocalObservation, updateLocalWorkspace])
+  const showReplay = useCallback(async (matchId: string, tick: number) => {
+    const result = await showGameReplay(matchId, tick)
+    updateLocalWorkspace({ replay: { matchId, tick } })
+    return result
+  }, [showGameReplay, updateLocalWorkspace])
+  const returnLive = useCallback(() => {
+    returnGameLive()
+    updateLocalWorkspace({ replay: null })
+  }, [returnGameLive, updateLocalWorkspace])
+  const exitLocal = useCallback(() => {
+    flushLocalWorkspace()
+    onLocalExit?.()
+  }, [flushLocalWorkspace, onLocalExit])
+  const editLocal = useCallback((tick: number, matchId?: string) => {
+    flushLocalWorkspace()
+    onLocalEdit?.(tick, matchId)
+  }, [flushLocalWorkspace, onLocalEdit])
   const replaceMovementGoals = useCallback((next: MovementGoals) => { movementGoalsRef.current = next; setMovementGoals(next) }, [])
   const removeMovementGoal = useCallback((objectId: string) => {
     if (!movementGoalsRef.current[objectId]) return
@@ -49,6 +106,54 @@ export function ArenaPage({ demo = false, local = false, official = false, local
   }, [replaceMovementGoals])
   useEffect(() => { localStorage.setItem(movementStorageKey, JSON.stringify(movementGoals)) }, [movementGoals, movementStorageKey])
   useEffect(() => { localStorage.setItem(TEAM_FOG_DISPLAY_STORAGE_KEY, JSON.stringify(teamFogDisplay)) }, [teamFogDisplay])
+  useEffect(() => {
+    localWorkspaceRef.current = localWorkspace
+    if (!workspaceKey) return
+    if (workspaceSaveTimerRef.current !== null) window.clearTimeout(workspaceSaveTimerRef.current)
+    workspaceSaveTimerRef.current = window.setTimeout(() => {
+      workspaceSaveTimerRef.current = null
+      localStorage.setItem(workspaceKey, JSON.stringify(localWorkspace))
+    }, 150)
+  }, [localWorkspace, workspaceKey])
+  useEffect(() => () => {
+    if (!workspaceKey) return
+    if (workspaceSaveTimerRef.current !== null) window.clearTimeout(workspaceSaveTimerRef.current)
+    localStorage.setItem(workspaceKey, JSON.stringify(localWorkspaceRef.current))
+  }, [workspaceKey])
+  useEffect(() => {
+    if (!workspaceEnabled || workspaceRestored || restoreStartedRef.current) return
+    if (!game.localSession || !game.localStatus || !game.state) return
+    if (game.localView.mode !== 'HUMAN' && !game.observation) return
+    const savedReplay = initialWorkspace.replay
+    updateLocalWorkspace({ view: game.localView })
+    if (!savedReplay) {
+      setWorkspaceRestored(true)
+      return
+    }
+    restoreStartedRef.current = true
+    void showGameReplay(savedReplay.matchId, savedReplay.tick).then(() => {
+      setWorkspaceRestored(true)
+    }).catch(() => {
+      updateLocalWorkspace({ replay: null })
+      setWorkspaceRestored(true)
+    })
+  }, [game.localSession, game.localStatus, game.localView, game.observation, game.state, initialWorkspace.replay, showGameReplay, updateLocalWorkspace, workspaceEnabled, workspaceRestored])
+  useEffect(() => {
+    if (!workspaceEnabled || !workspaceRestored) return
+    updateLocalWorkspace({ view: game.localView })
+  }, [game.localView, updateLocalWorkspace, workspaceEnabled, workspaceRestored])
+  useEffect(() => {
+    if (!workspaceEnabled || !workspaceRestored) return
+    updateLocalWorkspace({ replay: game.replay ? { matchId: game.replay.match_id, tick: game.replay.tick } : null })
+  }, [game.replay, updateLocalWorkspace, workspaceEnabled, workspaceRestored])
+  useEffect(() => {
+    if (!workspaceEnabled || !workspaceRestored) return
+    updateLocalWorkspace({ selectedObjectId: selectedId })
+  }, [selectedId, updateLocalWorkspace, workspaceEnabled, workspaceRestored])
+  useEffect(() => {
+    if (!workspaceRestored || !selectedId || !game.state) return
+    if (!game.state.objects.some((object) => object.id === selectedId)) setSelectedId(null)
+  }, [game.state, selectedId, workspaceRestored])
   useEffect(() => { if (game.tick) { const nextPlan = { tick: game.tick, unit_actions: {} }; tickRef.current = game.tick; planRef.current = nextPlan; autoMovementTickRef.current = null; setPlan(nextPlan); setTargetMode(null); setMoveSelecting(false); setMovementError(null) } }, [game.tick])
   useEffect(() => {
     const authoritative = game.receipts[game.submissionSource]
@@ -121,7 +226,7 @@ export function ArenaPage({ demo = false, local = false, official = false, local
 		const positions = new Set(attackPositions.map(positionKey))
 		return new Set((game.state?.objects ?? []).flatMap((object) => object.id && object.controlled === false && object.position && positions.has(positionKey(object.position)) ? [object.id] : []))
 	}, [attackPositions, game.state])
-  const select = (object: WorldObject | null) => { setSelectedId(object?.id ?? null); setTargetMode(null); setMoveSelecting(false); setMovementError(null) }
+  const select = (object: WorldObject | null) => { const nextId = object?.id ?? null; setSelectedId(nextId); updateLocalWorkspace({ selectedObjectId: nextId }); setTargetMode(null); setMoveSelecting(false); setMovementError(null) }
   const selectFromAssetList = (object: WorldObject) => {
     select(object)
     if (!object.position) return
@@ -160,15 +265,15 @@ export function ArenaPage({ demo = false, local = false, official = false, local
     select(null)
   }
   const cancelMovementGoal = (object: WorldObject) => { if (!object.id) return; removeMovementGoal(object.id); if (object.kind === 'CORE') setCoreAction(null); else setUnitAction(object.id, null); select(null) }
-  if (!game.state) return <div className="grid h-dvh place-items-center"><div className="text-center"><div className="mx-auto mb-4 size-2 animate-pulse rounded-full bg-cyan-signal shadow-[0_0_14px_rgba(69,145,197,.45)]" /><p className="font-mono text-xs tracking-[.2em] text-zinc-500">{t(`game.${game.phase}`)}</p>{game.error && <p role="alert" className="mt-3 text-xs text-coral-hostile">{getErrorMessage(game.error)}</p>}</div></div>
+  if (!game.state || (workspaceEnabled && !workspaceRestored)) return <div className="grid h-dvh place-items-center"><div className="text-center"><div className="mx-auto mb-4 size-2 animate-pulse rounded-full bg-cyan-signal shadow-[0_0_14px_rgba(69,145,197,.45)]" /><p className="font-mono text-xs tracking-[.2em] text-zinc-500">{t(`game.${game.phase}`)}</p>{game.error && <p role="alert" className="mt-3 text-xs text-coral-hostile">{getErrorMessage(game.error)}</p>}</div></div>
   return <div className="grid h-dvh min-h-[560px] grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr]">
-    <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} teamFogDisplay={teamFogDisplay} onTeamFogDisplayChange={setTeamFogDisplay} />
+    <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} teamFilter={workspaceEnabled ? localWorkspace.selectedTeam : undefined} onTeamFilterChange={workspaceEnabled ? updateTeamFilter : undefined} teamFogDisplay={teamFogDisplay} onTeamFogDisplayChange={setTeamFogDisplay} />
     <section className="relative min-h-0 overflow-hidden">
       {!respawning && local && game.localSession?.mode === 'step' && game.tick && game.liveTick
-        ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} localView={game.localView} observerOnly={game.localSession?.observer_only} observationPending={game.observationPending} godSnapshot={game.godSnapshot} onAdvance={game.advance} onReplay={game.showReplay} onReturnLive={game.returnLive} onBranch={onLocalEdit ? async () => { const selectedTick = game.replay?.tick ?? game.tick; if (selectedTick !== null) onLocalEdit(selectedTick, game.replay?.match_id ?? game.localStatus?.match_id ?? undefined) } : game.branchFromReplay} onObservation={game.setLocalObservation} onLoadGodDiagnostics={game.loadGodDiagnostics} onHumanFullVision={game.setHumanFullVision} onAddParticipant={game.addLocalParticipant} onSetTickLabel={game.setTickLabel} onEditWorld={onLocalEdit} onExitToLobby={onLocalExit} />
+        ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} localView={game.localView} observerOnly={game.localSession?.observer_only} observationPending={game.observationPending} godSnapshot={game.godSnapshot} onAdvance={game.advance} onReplay={showReplay} onReturnLive={returnLive} onBranch={onLocalEdit ? async () => { const selectedTick = game.replay?.tick ?? game.tick; if (selectedTick !== null) editLocal(selectedTick, game.replay?.match_id ?? game.localStatus?.match_id ?? undefined) } : game.branchFromReplay} onObservation={selectObservation} onLoadGodDiagnostics={game.loadGodDiagnostics} onHumanFullVision={game.setHumanFullVision} onAddParticipant={game.addLocalParticipant} onSetTickLabel={game.setTickLabel} onEditWorld={onLocalEdit ? editLocal : undefined} onExitToLobby={onLocalExit ? exitLocal : undefined} workspace={workspaceEnabled ? localWorkspace.control : undefined} onWorkspaceChange={workspaceEnabled ? updateControlWorkspace : undefined} />
         : !respawning && <GameHUD phase={game.phase} stateReceivedAt={game.stateReceivedAt} />}
       {!respawning && !readOnly && game.tick && <PendingCommands tick={game.tick} state={game.state} receipts={game.receipts} />}
-      <WorldCanvas state={game.state} explored={game.explored} replay={Boolean(game.replay)} selectedId={selectedId} targeting={targetMode !== null} destinationSelecting={moveSelecting} attackPositions={attackPositions} targetableIds={targetableIds} routeDestinations={routeDestinations} moveArrows={moveArrows} sweepMarkers={sweepMarkers} shotMarkers={shotMarkers} tacticMovements={tacticMovements} playerFog={game.observation?.view.mode === 'GLOBAL' ? game.observation.player_fog : undefined} teamFogDisplay={teamFogDisplay} centerPosition={centerPosition} centerRequest={centerRequest} zoomRequest={zoomRequest} onSelect={select} onTarget={chooseTarget} onAttackPosition={chooseAttackPosition} onMoveDestination={chooseMoveDestination} onCenterBeacon={() => { setCenterPosition(game.state!.champion_beacon.position); setCenterRequest((value) => value + 1) }} onAnchorChange={setAnchor} onViewportChange={local ? game.setObservationViewport : undefined} />
+      <WorldCanvas state={game.state} explored={game.explored} replay={Boolean(game.replay)} selectedId={selectedId} targeting={targetMode !== null} destinationSelecting={moveSelecting} attackPositions={attackPositions} targetableIds={targetableIds} routeDestinations={routeDestinations} moveArrows={moveArrows} sweepMarkers={sweepMarkers} shotMarkers={shotMarkers} tacticMovements={tacticMovements} playerFog={game.observation?.view.mode === 'GLOBAL' ? game.observation.player_fog : undefined} teamFogDisplay={teamFogDisplay} initialCamera={workspaceEnabled ? initialWorkspace.camera : undefined} centerPosition={centerPosition} centerRequest={centerRequest} zoomRequest={zoomRequest} onSelect={select} onTarget={chooseTarget} onAttackPosition={chooseAttackPosition} onMoveDestination={chooseMoveDestination} onCenterBeacon={() => { setCenterPosition(game.state!.champion_beacon.position); setCenterRequest((value) => value + 1) }} onAnchorChange={setAnchor} onViewportChange={local ? game.setObservationViewport : undefined} onCameraChange={workspaceEnabled ? updateCameraWorkspace : undefined} />
       {!respawning && <ResourceActivity events={game.state.events} />}
       {respawning && <RespawnOverlay destroyedBy={coreDestroyer} selfDestructed={coreSelfDestructed} />}
       {!respawning && !readOnly && selected?.controlled && anchor && actionAvailability && !targetMode && !moveSelecting && <UnitActionDialog anchor={anchor} selected={selected} plan={plan} movementGoal={selected.id ? movementGoals[selected.id] : undefined} phase={game.phase} resources={game.state.resources} population={game.state.population} availability={actionAvailability} onClose={() => select(null)} onTargeting={() => { setMoveSelecting(false); setTargetMode('SHOOT') }} onSweepTargeting={() => { setMoveSelecting(false); setTargetMode('SWEEP') }} onMoveTargeting={() => { setTargetMode(null); setMovementError(null); setMoveSelecting(true) }} onCancelMovementGoal={() => cancelMovementGoal(selected)} onUnitAction={unitAction} onCoreAction={coreAction} />}

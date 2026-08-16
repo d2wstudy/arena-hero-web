@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import '../../lib/i18n'
 import { teamTone } from '../../lib/teamColors'
 import { DEFAULT_TEAM_FOG_DISPLAY_SETTINGS, type TeamFogDisplaySettings } from '../../lib/teamFogDisplay'
@@ -62,6 +62,21 @@ describe('AssetList', () => {
     expect(screen.queryByRole('button', { name: /Core/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Ranger/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Team 2' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('restores a controlled team filter when a save is reopened', async () => {
+    const onTeamFilterChange = vi.fn()
+    const objects = [
+      { kind: 'CORE' as const, id: 'core-1', controlled: false, owner_username: 'alpha', team: 1, position: [0, 0] as [number, number], hp: 5 },
+      { kind: 'UNIT' as const, id: 'ranger-2', controlled: false, owner_username: 'beta', team: 2, position: [8, 0] as [number, number], hp: 2, unit_type: 'RANGER' as const, cargo: 0 },
+    ]
+    render(<AssetList state={{ ...state, view_mode: 'GOD' }} objects={objects} selectedId={null} onSelect={() => undefined} teamFilter={2} onTeamFilterChange={onTeamFilterChange} />)
+
+    expect(screen.queryByRole('button', { name: /Core/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Ranger/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Team 2' })).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(screen.getByRole('button', { name: 'Team 1' }))
+    expect(onTeamFilterChange).toHaveBeenCalledWith(1)
   })
 
   it('keeps both fog layers enabled by default and updates their opacity independently', async () => {

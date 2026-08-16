@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../../lib/i18n'
+import type { LocalControlWorkspace } from '../../lib/localWorkspace'
 import type { LocalHistory, LocalMatchStatus, LocalReplay } from '../../lib/types'
 import { LocalStepControl } from './LocalStepControl'
 
@@ -82,6 +83,26 @@ describe('LocalStepControl', () => {
     expect(screen.getByRole('navigation', { name: 'Control panel sections' })).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: 'Close control panel' })[0])
     expect(screen.queryByRole('navigation', { name: 'Control panel sections' })).not.toBeInTheDocument()
+  })
+
+  it('restores the drawer, active tab, and safe Tick input preferences', async () => {
+    const onWorkspaceChange = vi.fn()
+    const workspace: LocalControlWorkspace = {
+      drawerOpen: true,
+      activeTab: 'view',
+      batchTickText: '25',
+      autoTickSecondsText: '.4',
+    }
+    render(<LocalStepControl {...baseProps} workspace={workspace} onWorkspaceChange={onWorkspaceChange} />)
+
+    const navigation = screen.getByRole('navigation', { name: 'Control panel sections' })
+    expect(within(navigation).getByRole('button', { name: 'View' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('spinbutton', { name: 'Tick interval (seconds)' })).toHaveValue(0.4)
+
+    await userEvent.click(within(navigation).getByRole('button', { name: 'Advance' }))
+    expect(screen.getByRole('spinbutton', { name: 'Consecutive Ticks (integer)' })).toHaveValue(25)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close control panel' })[0])
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenLastCalledWith({ ...workspace, drawerOpen: false, activeTab: 'advance' }))
   })
 
   it('advances only after every bot is ready', async () => {

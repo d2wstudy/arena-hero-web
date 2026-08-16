@@ -1,11 +1,11 @@
 import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, FolderOpen, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, Repeat2, RotateCcw, Save, Settings2, Timer, Trash2, User, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { LocalControlTab, LocalControlWorkspace } from '../../lib/localWorkspace'
 import type { LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalViewSelection, StreamPhase } from '../../lib/types'
 import { GodModeConsole } from './GodModeConsole'
 
 type TickRunMode = 'idle' | 'batch' | 'auto'
-type ControlTab = 'advance' | 'view' | 'history' | 'lab'
 
 const MAX_BATCH_TICKS = 100_000
 const MAX_AUTO_INTERVAL_SECONDS = 3_600
@@ -32,6 +32,8 @@ export function LocalStepControl({
   onSetTickLabel,
   onEditWorld,
   onExitToLobby,
+  workspace,
+  onWorkspaceChange,
 }: {
   tick: number
   liveTick: number
@@ -54,16 +56,18 @@ export function LocalStepControl({
   onSetTickLabel: (matchId: string, tick: number, label: string) => Promise<unknown>
   onEditWorld?: (tick: number, matchId?: string) => void
   onExitToLobby?: () => void
+  workspace?: LocalControlWorkspace
+  onWorkspaceChange?: (workspace: LocalControlWorkspace) => void
 }) {
   const { t } = useTranslation()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<ControlTab>('advance')
+  const [drawerOpen, setDrawerOpen] = useState(workspace?.drawerOpen ?? false)
+  const [activeTab, setActiveTab] = useState<LocalControlTab>(workspace?.activeTab ?? 'advance')
   const [busy, setBusy] = useState<'advance' | 'replay' | 'branch' | 'label' | 'view' | null>(null)
   const [labelText, setLabelText] = useState('')
   const [runMode, setRunMode] = useState<TickRunMode>('idle')
-  const [batchTickText, setBatchTickText] = useState('10')
+  const [batchTickText, setBatchTickText] = useState(workspace?.batchTickText ?? '10')
   const [remainingTicks, setRemainingTicks] = useState(0)
-  const [autoTickSecondsText, setAutoTickSecondsText] = useState('1')
+  const [autoTickSecondsText, setAutoTickSecondsText] = useState(workspace?.autoTickSecondsText ?? '1')
   const [timelineTick, setTimelineTick] = useState(tick)
   const runnerTimerRef = useRef<number | null>(null)
   const advanceInFlightRef = useRef(false)
@@ -107,6 +111,10 @@ export function LocalStepControl({
     : localView.mode === 'PLAYER'
       ? observedParticipant?.username ?? t('game.robotView')
       : status?.human ?? t('game.humanView')
+
+  useEffect(() => {
+    onWorkspaceChange?.({ drawerOpen, activeTab, batchTickText, autoTickSecondsText })
+  }, [activeTab, autoTickSecondsText, batchTickText, drawerOpen, onWorkspaceChange])
 
   useEffect(() => {
     setLabelText(currentLabel)
@@ -282,12 +290,12 @@ export function LocalStepControl({
     }
   }
 
-  const openTab = (tab: ControlTab) => {
+  const openTab = (tab: LocalControlTab) => {
     setActiveTab(tab)
     setDrawerOpen(true)
   }
 
-  const tabs: { id: ControlTab; icon: ReactNode; label: string }[] = [
+  const tabs: { id: LocalControlTab; icon: ReactNode; label: string }[] = [
     { id: 'advance', icon: <FastForward size={13} />, label: t('game.controlAdvance') },
     { id: 'view', icon: <Eye size={13} />, label: t('game.controlView') },
     { id: 'history', icon: <History size={13} />, label: t('game.controlHistory') },

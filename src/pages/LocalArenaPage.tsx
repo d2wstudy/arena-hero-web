@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { APIError, api } from '../lib/api'
 import { getErrorMessage } from '../lib/errorMessage'
+import { localWorkspaceStorageKey, readLocalWorkspaceState, workspaceAfterWorldEdit } from '../lib/localWorkspace'
 import type { LocalCreateSaveInput, LocalEditSaveInput, LocalSaveCatalog, LocalSavePlayerConfig, LocalSaveSeedMode, LocalSaveSpawnMode, LocalSaveSummary } from '../lib/types'
 import { ArenaPage } from './ArenaPage'
 
@@ -136,6 +137,12 @@ export function LocalArenaPage() {
 
   if (screen === 'EDITOR' && editor) {
     return <LocalWorldEditor context={editor} onCancel={() => { setEditor(null); setScreen(editor.mode === 'EDIT' && activeSave ? 'GAME' : 'LOBBY') }} onCompleted={async (save) => {
+      if (editor.mode === 'EDIT') {
+        const sourceKey = localWorkspaceStorageKey(editor.save.save_id)
+        const targetKey = localWorkspaceStorageKey(save.save_id)
+        const inherited = workspaceAfterWorldEdit(readLocalWorkspaceState(localStorage.getItem(sourceKey)))
+        localStorage.setItem(targetKey, JSON.stringify(inherited))
+      }
       setActiveSave(save)
       setEditor(null)
       setScreen('GAME')

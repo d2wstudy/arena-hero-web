@@ -45,6 +45,7 @@ interface Props {
   tacticMovements?: LocalTacticMovementIntent[]
   playerFog?: LocalPlayerFog[]
   teamFogDisplay?: TeamFogDisplaySettings
+  initialCamera?: WorldCamera | null
   centerPosition?: Position | null
   centerRequest: number
   zoomRequest: number
@@ -55,6 +56,7 @@ interface Props {
   onCenterBeacon: () => void
   onAnchorChange: (anchor: MapAnchor | null) => void
   onViewportChange?: (viewport: LocalChunkViewport) => void
+  onCameraChange?: (camera: WorldCamera) => void
   highlightPositions?: Position[]
   preferredSelectionId?: string
 }
@@ -125,7 +127,7 @@ function commitCanvasBuffer(target: HTMLCanvasElement, source: HTMLCanvasElement
   return true
 }
 
-export function WorldCanvas({ state, explored, replay = false, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], playerFog = [], teamFogDisplay = DEFAULT_TEAM_FOG_DISPLAY_SETTINGS, centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
+export function WorldCanvas({ state, explored, replay = false, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], playerFog = [], teamFogDisplay = DEFAULT_TEAM_FOG_DISPLAY_SETTINGS, initialCamera, centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, onCameraChange, highlightPositions = [], preferredSelectionId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   // Render into detached buffers first.  The visible canvas is only touched
@@ -136,7 +138,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
   const compositeBufferRef = useRef<HTMLCanvasElement | null>(null)
   const terrainCacheRef = useRef<TerrainTileCache | null>(null)
   const [size, setSize] = useState({ width: 800, height: 600 })
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, cell: 44 })
+  const [camera, setCamera] = useState<Camera>(() => initialCamera ? { ...initialCamera } : { x: 0, y: 0, cell: 44 })
   const [obstacleSprites, setObstacleSprites] = useState<HTMLImageElement[]>([])
   const [resourceSprites, setResourceSprites] = useState<HTMLImageElement[]>([])
   const [unitSprites, setUnitSprites] = useState<Partial<Record<UnitArtType, HTMLImageElement>>>({})
@@ -157,6 +159,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
   const lastCameraCommitAtRef = useRef(0)
   const pendingCameraRef = useRef<Camera | null>(null)
   const cameraRef = useRef(camera)
+  const preserveInitialCameraRef = useRef(Boolean(initialCamera))
   const centeredCoreId = useRef<string | null>(null); const previousCenterRequest = useRef(centerRequest)
   const visible = useMemo(
     () => state.view_mode ? new Set(explored.keys()) : computeVisibility(state),
@@ -205,16 +208,19 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
       setCamera(pending)
     })
   }, [])
+  const publishCurrentCamera = useCallback(() => {
+    const current = pendingCameraRef.current ?? cameraRef.current
+    onCameraChange?.({ ...current })
+  }, [onCameraChange])
   const setCameraImmediately = useCallback((update: (current: Camera) => Camera) => {
     if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current)
     cameraFrameRef.current = null
     pendingCameraRef.current = null
-    setCamera((current) => {
-      const next = update(current)
-      cameraRef.current = next
-      return next
-    })
-  }, [])
+    const next = update(cameraRef.current)
+    cameraRef.current = next
+    setCamera(next)
+    onCameraChange?.({ ...next })
+  }, [onCameraChange])
   const scheduleZoom = useCallback((nextCell: (current: number) => number) => {
     setZooming(true)
     scheduleCamera((current) => ({ ...current, cell: nextCell(current.cell) }))
@@ -222,8 +228,9 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     zoomEndTimeoutRef.current = window.setTimeout(() => {
       zoomEndTimeoutRef.current = null
       setZooming(false)
+      publishCurrentCamera()
     }, ZOOM_SETTLE_MS)
-  }, [scheduleCamera])
+  }, [publishCurrentCamera, scheduleCamera])
 
   useEffect(() => {
     const element = containerRef.current
@@ -281,11 +288,17 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
   useEffect(() => {
     const explicitlyRequested = centerRequest !== previousCenterRequest.current
     previousCenterRequest.current = centerRequest
+    if (explicitlyRequested) preserveInitialCameraRef.current = false
     if (explicitlyRequested && centerPosition) {
       setCameraImmediately((current) => ({ ...current, x: centerPosition[0], y: centerPosition[1] }))
       return
     }
     const core = entities.find((object) => object.kind === 'CORE' && object.controlled)
+    if (preserveInitialCameraRef.current) {
+      preserveInitialCameraRef.current = false
+      centeredCoreId.current = core?.id ?? null
+      return
+    }
     if (!core?.position) {
       if (state.view_mode !== 'GOD') centeredCoreId.current = null
       return
@@ -423,8 +436,8 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
       }}
       onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); const current = cameraRef.current; drag.current = { x: event.clientX, y: event.clientY, cameraX: current.x, cameraY: current.y, moved: false } }}
       onPointerMove={(event) => { const activeDrag = drag.current; if (!activeDrag) return; const dx = event.clientX - activeDrag.x, dy = event.clientY - activeDrag.y; if (Math.abs(dx) + Math.abs(dy) > 5) activeDrag.moved = true; const cameraX = activeDrag.cameraX, cameraY = activeDrag.cameraY; scheduleCamera((current) => ({ ...current, x: cameraX - dx / current.cell, y: cameraY - dy / current.cell })) }}
-      onPointerUp={(event) => { if (drag.current && !drag.current.moved) choose(screenToWorld(event.clientX, event.clientY)); drag.current = null }}
-      onPointerCancel={() => { drag.current = null }}
+      onPointerUp={(event) => { if (drag.current && !drag.current.moved) choose(screenToWorld(event.clientX, event.clientY)); drag.current = null; publishCurrentCamera() }}
+      onPointerCancel={() => { drag.current = null; publishCurrentCamera() }}
     />
     {highlightPositions.map((position) => {
       const point = worldToScreen(position)

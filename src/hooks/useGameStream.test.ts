@@ -180,6 +180,38 @@ describe('useGameStream WebSocket transport', () => {
     unmount()
   })
 
+  it('starts and reconnects a save in its restored global view without flashing HUMAN', async () => {
+    let sessionCalls = 0
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = String(input)
+      if (path === '/api/local/session') {
+        sessionCalls += 1
+        return jsonResponse({ csrf_token: 'local-csrf', username: 'commander', mode: 'step', match_id: 'match-1', observer_only: false, god_mode: true })
+      }
+      if (path.startsWith('/api/local/history')) return jsonResponse(localHistory(7))
+      if (path === '/api/local/match') return jsonResponse(localStatus(7))
+      if (path.startsWith('/api/local/observe?view=GLOBAL')) return jsonResponse(observation('GLOBAL', 7, 99))
+      if (path.startsWith('/api/local/observe?view=HUMAN')) throw new Error('restored global saves must not request HUMAN')
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    const initialViewport = { min_chunk_x: 4, max_chunk_x: 7, min_chunk_y: -3, max_chunk_y: 1 }
+    const { result, unmount } = renderHook(() => useGameStream(false, 'local', true, false, { mode: 'GLOBAL' }, initialViewport))
+    await act(flush)
+    expect(result.current.localView).toEqual({ mode: 'GLOBAL' })
+
+    const first = FakeWebSocket.instances[0]
+    await act(async () => { first.open(); first.message({ type: 'tick', data: 7 }); first.message({ type: 'state', data: demoState }); await flush() })
+    expect(result.current.state?.resources).toBe(99)
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/local/observe?view=HUMAN'))).toBe(false)
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/local/observe?view=GLOBAL&match_id=match-1&tick=7&min_chunk_x=4&max_chunk_x=7&min_chunk_y=-3&max_chunk_y=1')).toBe(true)
+
+    await act(async () => { first.serverClose(1012, 'local session refreshed'); await flush() })
+    expect(sessionCalls).toBe(2)
+    expect(result.current.localView).toEqual({ mode: 'GLOBAL' })
+    unmount()
+  })
+
   it('refreshes the local session when a scheduled human becomes active', async () => {
     let sessionCalls = 0
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {

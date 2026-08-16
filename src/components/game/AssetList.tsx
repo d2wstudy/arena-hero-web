@@ -12,13 +12,15 @@ interface Props {
   objects: WorldObject[]
   selectedId: string | null
   onSelect: (object: WorldObject) => void
+  teamFilter?: number | null
+  onTeamFilterChange?: (team: number | null) => void
   teamFogDisplay?: TeamFogDisplaySettings
   onTeamFogDisplayChange?: (settings: TeamFogDisplaySettings) => void
 }
 
-export function AssetList({ state, objects, selectedId, onSelect, teamFogDisplay, onTeamFogDisplayChange }: Props) {
+export function AssetList({ state, objects, selectedId, onSelect, teamFilter, onTeamFilterChange, teamFogDisplay, onTeamFogDisplayChange }: Props) {
   const { t } = useTranslation()
-  const [selectedTeam, setSelectedTeam] = useState<number | null>(null)
+  const [internalTeamFilter, setInternalTeamFilter] = useState<number | null>(null)
   const globalAssets = useMemo(
     () => objects.filter((object) => object.kind === 'CORE' || object.kind === 'UNIT'),
     [objects],
@@ -27,6 +29,7 @@ export function AssetList({ state, objects, selectedId, onSelect, teamFogDisplay
     () => [...new Set(globalAssets.flatMap((object) => Number.isSafeInteger(object.team) && object.team !== undefined && object.team >= 1 ? [object.team] : []))].sort((left, right) => left - right),
     [globalAssets],
   )
+  const selectedTeam = teamFilter === undefined ? internalTeamFilter : teamFilter
   const effectiveTeam = selectedTeam !== null && teams.includes(selectedTeam) ? selectedTeam : null
   const listed = useMemo(
     () => state.view_mode === 'GOD'
@@ -37,6 +40,10 @@ export function AssetList({ state, objects, selectedId, onSelect, teamFogDisplay
   const fogControls = state.view_mode === 'GOD' && teamFogDisplay && onTeamFogDisplayChange
     ? { display: teamFogDisplay, onChange: onTeamFogDisplayChange }
     : null
+  const selectTeam = (team: number | null) => {
+    if (teamFilter === undefined) setInternalTeamFilter(team)
+    onTeamFilterChange?.(team)
+  }
 
   return <aside className="panel-strong hidden h-full min-h-0 flex-col border-y-0 border-l-0 lg:flex">
     <div className="border-b border-white/[.07]">
@@ -50,11 +57,11 @@ export function AssetList({ state, objects, selectedId, onSelect, teamFogDisplay
         <span className="min-w-8 rounded-gold-sm bg-white/[.04] px-2 py-1 text-center font-mono text-[9px] tabular-nums text-zinc-500">{listed.length}</span>
       </div>
       {state.view_mode === 'GOD' && teams.length > 1 && <div role="group" aria-label={t('game.teamFilter')} className="flex gap-1 overflow-x-auto border-t border-white/[.07] px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <button type="button" aria-pressed={effectiveTeam === null} onClick={() => setSelectedTeam(null)} className={`focus-ring h-7 shrink-0 rounded-full border px-2.5 text-[9px] ${effectiveTeam === null ? 'border-cyan-signal/35 bg-cyan-signal/10 text-blue-soft' : 'border-white/10 bg-black/10 text-zinc-500 hover:text-zinc-200'}`}>{t('game.allTeams')}</button>
+        <button type="button" aria-pressed={effectiveTeam === null} onClick={() => selectTeam(null)} className={`focus-ring h-7 shrink-0 rounded-full border px-2.5 text-[9px] ${effectiveTeam === null ? 'border-cyan-signal/35 bg-cyan-signal/10 text-blue-soft' : 'border-white/10 bg-black/10 text-zinc-500 hover:text-zinc-200'}`}>{t('game.allTeams')}</button>
         {teams.map((team) => {
           const tone = teamTone(team)
           const active = effectiveTeam === team
-          return <button key={team} type="button" aria-pressed={active} aria-label={t('game.teamName', { team })} onClick={() => setSelectedTeam(team)} style={tone ? { borderColor: tone.color, color: tone.labelColor } : undefined} className={`focus-ring flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2 text-[9px] ${active ? 'bg-white/[.09]' : 'bg-black/10 opacity-45 hover:opacity-100'}`}>
+          return <button key={team} type="button" aria-pressed={active} aria-label={t('game.teamName', { team })} onClick={() => selectTeam(team)} style={tone ? { borderColor: tone.color, color: tone.labelColor } : undefined} className={`focus-ring flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2 text-[9px] ${active ? 'bg-white/[.09]' : 'bg-black/10 opacity-45 hover:opacity-100'}`}>
             <span aria-hidden="true" style={tone ? { backgroundColor: tone.color } : undefined} className="size-1.5 shrink-0 rounded-full" />
             <span>{t('game.teamShortName', { team })}</span>
           </button>
