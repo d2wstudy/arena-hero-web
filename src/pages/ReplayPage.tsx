@@ -149,6 +149,7 @@ export function ReplayPage() {
       <WorldCanvas
         state={frame.state}
         explored={explored}
+        replay
         selectedId={selectedId}
         targeting={false}
         destinationSelecting={false}

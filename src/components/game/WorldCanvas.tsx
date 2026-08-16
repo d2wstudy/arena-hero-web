@@ -22,6 +22,14 @@ import type { MapAnchor } from './UnitActionDialog'
 interface Props {
   state: PlayerState
   explored: Map<string, ExploredCell>
+  /**
+   * A replay frame is a discrete snapshot, not a live transition.  Keeping
+   * this explicit lets the renderer skip movement/combat animations while a
+   * user scrubs history; otherwise every newly selected Tick starts an
+   * animation from the previous frame and makes fast scrubbing look like a
+   * flash.
+   */
+  replay?: boolean
   selectedId: string | null
   targeting: boolean
   destinationSelecting: boolean
@@ -87,10 +95,38 @@ interface TerrainTileCache {
 const unitSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedUnitSprite>>()
 const beaconSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedBeaconSprite>>()
 
-export function WorldCanvas({ state, explored, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
-  const backgroundCanvasRef = useRef<HTMLCanvasElement>(null)
+function ensureCanvasBuffer(ref: { current: HTMLCanvasElement | null }, width: number, height: number) {
+  const canvas = ref.current ?? document.createElement('canvas')
+  if (canvas.width !== width) canvas.width = width
+  if (canvas.height !== height) canvas.height = height
+  ref.current = canvas
+  return canvas
+}
+
+function commitCanvasBuffer(target: HTMLCanvasElement, source: HTMLCanvasElement, width: number, height: number) {
+  if (target.width !== width) target.width = width
+  if (target.height !== height) target.height = height
+  const context = target.getContext('2d')
+  if (!context) return false
+  // Replace the destination in one canvas operation.  Unlike clear + draw,
+  // this also removes entities that disappeared from the new frame while
+  // keeping the old frame intact until the replacement starts.
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.globalCompositeOperation = 'copy'
+  context.drawImage(source, 0, 0)
+  context.globalCompositeOperation = 'source-over'
+  return true
+}
+
+export function WorldCanvas({ state, explored, replay = false, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  // Render into detached buffers first.  The visible canvas is only touched
+  // after the complete frame (terrain + plans + entities) is ready, so a
+  // costly replay/observation update can never expose the clear step.
+  const backgroundBufferRef = useRef<HTMLCanvasElement | null>(null)
+  const entityBufferRef = useRef<HTMLCanvasElement | null>(null)
+  const compositeBufferRef = useRef<HTMLCanvasElement | null>(null)
   const terrainCacheRef = useRef<TerrainTileCache | null>(null)
   const [size, setSize] = useState({ width: 800, height: 600 })
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, cell: 44 })
@@ -255,32 +291,36 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
   }, [scheduleZoom, zoomRequest])
   useLayoutEffect(() => {
     const canvas = canvasRef.current
-    const backgroundCanvas = backgroundCanvasRef.current
-    if (!canvas || !backgroundCanvas || size.width <= 0 || size.height <= 0) return
+    if (!canvas || size.width <= 0 || size.height <= 0) return
     const ratio = canvasPixelRatio(size, window.devicePixelRatio || 1)
     const pixelWidth = Math.max(1, Math.round(size.width * ratio)), pixelHeight = Math.max(1, Math.round(size.height * ratio))
-    if (backgroundCanvas.width !== pixelWidth) backgroundCanvas.width = pixelWidth
-    if (backgroundCanvas.height !== pixelHeight) backgroundCanvas.height = pixelHeight
-    const backgroundContext = backgroundCanvas.getContext('2d'); if (!backgroundContext) return
+    const backgroundBuffer = ensureCanvasBuffer(backgroundBufferRef, pixelWidth, pixelHeight)
+    const entityBuffer = ensureCanvasBuffer(entityBufferRef, pixelWidth, pixelHeight)
+    const compositeBuffer = ensureCanvasBuffer(compositeBufferRef, pixelWidth, pixelHeight)
+    const backgroundContext = backgroundBuffer.getContext('2d'); if (!backgroundContext) return
     backgroundContext.setTransform(ratio, 0, 0, ratio, 0, 0)
-    if (canvas.width !== pixelWidth) canvas.width = pixelWidth
-    if (canvas.height !== pixelHeight) canvas.height = pixelHeight
-    const context = canvas.getContext('2d'); if (!context) return
-    context.setTransform(ratio, 0, 0, ratio, 0, 0)
     drawTiledWorldTerrain(backgroundContext, size, camera, ratio, terrainScene, terrainCacheRef, zooming)
     drawWorldPlanMarkers(backgroundContext, size, camera, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition)
+    const entityContext = entityBuffer.getContext('2d'); if (!entityContext) return
+    entityContext.setTransform(ratio, 0, 0, ratio, 0, 0)
+    const compositeContext = compositeBuffer.getContext('2d'); if (!compositeContext) return
+    compositeContext.setTransform(1, 0, 0, 1, 0, 0)
     const nextPositions = collectEntityPositions(state)
     const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const motionDisabled = replay || reduceMotion
     const animationStart = performance.now()
-    if (selectedId !== previousSelectedIdRef.current) {
+    if (motionDisabled) {
       previousSelectedIdRef.current = selectedId
-      selectionRippleRef.current = !reduceMotion && selectedId ? { objectId: selectedId, startedAt: animationStart } : null
+      selectionRippleRef.current = null
+    } else if (selectedId !== previousSelectedIdRef.current) {
+      previousSelectedIdRef.current = selectedId
+      selectionRippleRef.current = selectedId ? { objectId: selectedId, startedAt: animationStart } : null
     }
-    activeMovementRef.current = continueOrStartMotionAnimation(previousPositionsRef.current, nextPositions, activeMovementRef.current, animationStart, reduceMotion)
+    activeMovementRef.current = continueOrStartMotionAnimation(previousPositionsRef.current, nextPositions, activeMovementRef.current, animationStart, motionDisabled)
     const newSweeps = resolvedSweepMarkers(state, previousPositionsRef.current, seenEventIdsRef.current)
     const newShots = resolvedShotMarkers(state, previousPositionsRef.current, seenEventIdsRef.current)
     seenEventIdsRef.current = new Set(state.events.map((event) => event.event_id))
-    if (reduceMotion) {
+    if (motionDisabled) {
       activeSweepRef.current = null
       activeShotRef.current = null
     } else {
@@ -299,8 +339,15 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
       const shotProgress = activeShot ? Math.min(1, (now - activeShot.startedAt) / SHOT_ANIMATION_MS) : 1
       const selectionProgress = selectionRipple?.objectId === selectedId ? Math.min(1, (now - selectionRipple.startedAt) / SELECTION_RIPPLE_MS) : 1
       const easedProgress = linearProgress * linearProgress * (3 - 2 * linearProgress)
-      try { drawWorldEntities(context, size, camera, state, unitSprites, beaconSprite, visibleEntityGroups, selectedId, targetableIds, activeMovement?.motions ?? new Map(), easedProgress, activeSweep?.markers ?? [], sweepProgress, activeShot?.markers ?? [], shotProgress, selectionProgress) }
-      catch (error) { console.error('WORLD_RENDER_FAILED', error); return }
+      try {
+        // Both layers are drawn off-screen.  Only after composition succeeds
+        // do we copy a complete frame to the visible canvas.
+        drawWorldEntities(entityContext, size, camera, state, unitSprites, beaconSprite, visibleEntityGroups, selectedId, targetableIds, activeMovement?.motions ?? new Map(), easedProgress, activeSweep?.markers ?? [], sweepProgress, activeShot?.markers ?? [], shotProgress, selectionProgress)
+        compositeContext.clearRect(0, 0, pixelWidth, pixelHeight)
+        compositeContext.drawImage(backgroundBuffer, 0, 0)
+        compositeContext.drawImage(entityBuffer, 0, 0)
+        if (!commitCanvasBuffer(canvas, compositeBuffer, pixelWidth, pixelHeight)) return
+      } catch (error) { console.error('WORLD_RENDER_FAILED', error); return }
       if ((activeMovement && linearProgress < 1) || (activeSweep && sweepProgress < 1) || (activeShot && shotProgress < 1) || (selectionRipple && selectionProgress < 1)) animationFrameRef.current = requestAnimationFrame(renderFrame)
       else {
         if (activeMovementRef.current === activeMovement) activeMovementRef.current = null
@@ -311,7 +358,7 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
     }
     renderFrame(performance.now())
     return () => { if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current); animationFrameRef.current = null }
-  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, selectedId, targetableIds, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
+  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, replay, selectedId, targetableIds, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
   useEffect(() => {
     const selected = entities.find((object) => object.id === selectedId)
     if (!selected?.position) { onAnchorChange(null); return }
@@ -358,7 +405,6 @@ export function WorldCanvas({ state, explored, selectedId, targeting, destinatio
   }
   const featureAnchor = inspectedFeatureView ? mapFeatureAnchor(inspectedFeatureView.position, camera, size) : null
   return <div ref={containerRef} style={{ backgroundImage: `url(${WORLD_BACKGROUND_PATH})`, backgroundPosition: 'center', backgroundSize: 'cover' }} className={`relative h-full min-h-[420px] w-full overflow-hidden bg-space-950 ${targeting || destinationSelecting ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}>
-    <canvas ref={backgroundCanvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" />
     <canvas
       ref={canvasRef} className="absolute inset-0 h-full w-full touch-none" aria-label="Tactical world map"
       onWheel={(event) => {
