@@ -12,6 +12,7 @@ import { OBSTACLE_SPRITE_PATHS, obstacleCellShape, obstacleSpriteIndex, obstacle
 import { RESOURCE_SPRITE_PATHS, resourceSpriteIndex, resourceSpriteRect } from '../../lib/resourceArt'
 import { buildTeamFogLayers, type TeamFogLayer } from '../../lib/teamFog'
 import { teamTone, type TeamTone } from '../../lib/teamColors'
+import { DEFAULT_TEAM_FOG_DISPLAY_SETTINGS, type TeamFogDisplaySettings } from '../../lib/teamFogDisplay'
 import type { LocalChunkViewport, LocalMovementPurpose, LocalPlayerFog, LocalTacticMovementIntent, PlayerState, Position, WorldObject } from '../../lib/types'
 import { UNIT_SPRITE_PATHS, unitArtType, unitSpriteRect, type UnitArtType } from '../../lib/unitArt'
 import { computeVisibility, positionKey } from '../../lib/visibility'
@@ -43,6 +44,7 @@ interface Props {
   shotMarkers: ShotMarker[]
   tacticMovements?: LocalTacticMovementIntent[]
   playerFog?: LocalPlayerFog[]
+  teamFogDisplay?: TeamFogDisplaySettings
   centerPosition?: Position | null
   centerRequest: number
   zoomRequest: number
@@ -123,7 +125,7 @@ function commitCanvasBuffer(target: HTMLCanvasElement, source: HTMLCanvasElement
   return true
 }
 
-export function WorldCanvas({ state, explored, replay = false, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], playerFog = [], centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
+export function WorldCanvas({ state, explored, replay = false, selectedId, targeting, destinationSelecting, attackPositions = [], targetableIds, routeDestinations, moveArrows, sweepMarkers, shotMarkers, tacticMovements = [], playerFog = [], teamFogDisplay = DEFAULT_TEAM_FOG_DISPLAY_SETTINGS, centerPosition, centerRequest, zoomRequest, onSelect, onTarget, onAttackPosition, onMoveDestination, onCenterBeacon, onAnchorChange, onViewportChange, highlightPositions = [], preferredSelectionId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   // Render into detached buffers first.  The visible canvas is only touched
@@ -306,7 +308,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     const backgroundContext = backgroundBuffer.getContext('2d'); if (!backgroundContext) return
     backgroundContext.setTransform(ratio, 0, 0, ratio, 0, 0)
     drawTiledWorldTerrain(backgroundContext, size, camera, ratio, terrainScene, terrainCacheRef, zooming)
-    drawTeamFog(backgroundContext, size, camera, teamFogLayers)
+    drawTeamFog(backgroundContext, size, camera, teamFogLayers, teamFogDisplay)
     drawWorldPlanMarkers(backgroundContext, size, camera, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition)
     const entityContext = entityBuffer.getContext('2d'); if (!entityContext) return
     entityContext.setTransform(ratio, 0, 0, ratio, 0, 0)
@@ -365,7 +367,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     }
     renderFrame(performance.now())
     return () => { if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current); animationFrameRef.current = null }
-  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, replay, selectedId, targetableIds, tacticMovements, teamFogLayers, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
+  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, replay, selectedId, targetableIds, tacticMovements, teamFogLayers, teamFogDisplay, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
   useEffect(() => {
     const selected = entities.find((object) => object.id === selectedId)
     if (!selected?.position) { onAnchorChange(null); return }
@@ -604,13 +606,18 @@ function drawWorldTerrain(ctx: CanvasRenderingContext2D, size: { width: number; 
   for (const resource of renderedResources) drawResource(ctx, resource.position, resource.x, resource.y, camera.cell, resource.visible, resourceSprites)
 }
 
-function drawTeamFog(
+export function drawTeamFog(
   ctx: CanvasRenderingContext2D,
   size: { width: number; height: number },
   camera: Camera,
   layers: TeamFogLayer[],
+  display: TeamFogDisplaySettings,
 ) {
-  if (!layers.length) return
+  const visibilityOpacity = Math.min(1, Math.max(0, display.visibilityOpacity))
+  const explorationOpacity = Math.min(1, Math.max(0, display.explorationOpacity))
+  const drawVisibility = display.visibilityEnabled && visibilityOpacity > 0
+  const drawExploration = display.explorationEnabled && explorationOpacity > 0
+  if (!layers.length || (!drawVisibility && !drawExploration)) return
   const toScreen = ([x, y]: Position) => [
     size.width / 2 + (x - camera.x) * camera.cell,
     size.height / 2 + (y - camera.y) * camera.cell,
@@ -620,45 +627,49 @@ function drawTeamFog(
   const minY = camera.y - size.height / camera.cell / 2 - 1
   const maxY = camera.y + size.height / camera.cell / 2 + 1
 
-  for (const layer of layers) {
-    const tone = teamTone(layer.team)
-    if (!tone) continue
-    ctx.save()
-    ctx.fillStyle = tone.color
-    ctx.globalAlpha = .09
-    for (const position of layer.visibility) {
-      if (position[0] < minX || position[0] > maxX || position[1] < minY || position[1] > maxY) continue
-      const [x, y] = toScreen(position)
-      ctx.fillRect(x - camera.cell / 2, y - camera.cell / 2, camera.cell, camera.cell)
+  if (drawVisibility) {
+    for (const layer of layers) {
+      const tone = teamTone(layer.team)
+      if (!tone) continue
+      ctx.save()
+      ctx.fillStyle = tone.color
+      ctx.globalAlpha = visibilityOpacity
+      for (const position of layer.visibility) {
+        if (position[0] < minX || position[0] > maxX || position[1] < minY || position[1] > maxY) continue
+        const [x, y] = toScreen(position)
+        ctx.fillRect(x - camera.cell / 2, y - camera.cell / 2, camera.cell, camera.cell)
+      }
+      ctx.restore()
     }
-    ctx.restore()
   }
 
-  for (const layer of layers) {
-    const tone = teamTone(layer.team)
-    if (!tone || !layer.boundary.length) continue
-    ctx.save()
-    ctx.strokeStyle = tone.color
-    ctx.globalAlpha = .82
-    ctx.lineWidth = Math.min(3, Math.max(1.25, camera.cell * .045))
-    ctx.lineCap = 'square'
-    ctx.lineJoin = 'round'
-    ctx.shadowColor = tone.color
-    ctx.shadowBlur = Math.min(4, Math.max(1, camera.cell * .045))
-    ctx.beginPath()
-    for (const edge of layer.boundary) {
-      const edgeMinX = Math.min(edge.from[0], edge.to[0])
-      const edgeMaxX = Math.max(edge.from[0], edge.to[0])
-      const edgeMinY = Math.min(edge.from[1], edge.to[1])
-      const edgeMaxY = Math.max(edge.from[1], edge.to[1])
-      if (edgeMaxX < minX || edgeMinX > maxX || edgeMaxY < minY || edgeMinY > maxY) continue
-      const [fromX, fromY] = toScreen(edge.from)
-      const [toX, toY] = toScreen(edge.to)
-      ctx.moveTo(fromX, fromY)
-      ctx.lineTo(toX, toY)
+  if (drawExploration) {
+    for (const layer of layers) {
+      const tone = teamTone(layer.team)
+      if (!tone || !layer.boundary.length) continue
+      ctx.save()
+      ctx.strokeStyle = tone.color
+      ctx.globalAlpha = explorationOpacity
+      ctx.lineWidth = Math.min(3, Math.max(1.25, camera.cell * .045))
+      ctx.lineCap = 'square'
+      ctx.lineJoin = 'round'
+      ctx.shadowColor = tone.color
+      ctx.shadowBlur = Math.min(4, Math.max(1, camera.cell * .045))
+      ctx.beginPath()
+      for (const edge of layer.boundary) {
+        const edgeMinX = Math.min(edge.from[0], edge.to[0])
+        const edgeMaxX = Math.max(edge.from[0], edge.to[0])
+        const edgeMinY = Math.min(edge.from[1], edge.to[1])
+        const edgeMaxY = Math.max(edge.from[1], edge.to[1])
+        if (edgeMaxX < minX || edgeMinX > maxX || edgeMaxY < minY || edgeMinY > maxY) continue
+        const [fromX, fromY] = toScreen(edge.from)
+        const [toX, toY] = toScreen(edge.to)
+        ctx.moveTo(fromX, fromY)
+        ctx.lineTo(toX, toY)
+      }
+      ctx.stroke()
+      ctx.restore()
     }
-    ctx.stroke()
-    ctx.restore()
   }
 }
 

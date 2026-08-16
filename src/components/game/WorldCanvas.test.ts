@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { TeamFogLayer } from '../../lib/teamFog'
 import type { WorldObject } from '../../lib/types'
 import { canvasPixelRatio, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, wheelZoomCell } from '../../lib/worldCanvasPerformance'
+import { drawTeamFog } from './WorldCanvas'
+
+const fogLayer: TeamFogLayer = {
+  key: 'team:1',
+  team: 1,
+  playerIds: ['player-1'],
+  visibility: [[0, 0]],
+  exploration: [[0, 0]],
+  boundary: [{ from: [-.5, -.5], to: [.5, -.5] }],
+}
 
 describe('prioritizeSelectionCandidates', () => {
   it('lets a tutorial target win the first click when units share a cell', () => {
@@ -73,6 +84,32 @@ describe('terrainChunkBounds', () => {
   })
 })
 
+describe('drawTeamFog', () => {
+  it('draws and configures the visibility and exploration layers independently', () => {
+    const boundaryOnly = canvasContext()
+    drawTeamFog(boundaryOnly.context, { width: 200, height: 200 }, { x: 0, y: 0, cell: 20 }, [fogLayer], {
+      visibilityEnabled: false,
+      visibilityOpacity: .27,
+      explorationEnabled: true,
+      explorationOpacity: .42,
+    })
+    expect(boundaryOnly.context.fillRect).not.toHaveBeenCalled()
+    expect(boundaryOnly.context.stroke).toHaveBeenCalledOnce()
+    expect(boundaryOnly.alphaValues).toEqual([.42])
+
+    const visibilityOnly = canvasContext()
+    drawTeamFog(visibilityOnly.context, { width: 200, height: 200 }, { x: 0, y: 0, cell: 20 }, [fogLayer], {
+      visibilityEnabled: true,
+      visibilityOpacity: .31,
+      explorationEnabled: false,
+      explorationOpacity: .76,
+    })
+    expect(visibilityOnly.context.fillRect).toHaveBeenCalledOnce()
+    expect(visibilityOnly.context.stroke).not.toHaveBeenCalled()
+    expect(visibilityOnly.alphaValues).toEqual([.31])
+  })
+})
+
 describe('observationChunkViewport', () => {
   it('requests only the visible 32-cell world chunks plus a prefetch margin', () => {
     expect(observationChunkViewport({ x: 0, y: 0, cell: 40 }, { width: 800, height: 600 })).toEqual({
@@ -92,3 +129,29 @@ describe('observationChunkViewport', () => {
     })
   })
 })
+
+function canvasContext() {
+  const alphaValues: number[] = []
+  const context = {
+    save: vi.fn(),
+    restore: vi.fn(),
+    fillRect: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    lineCap: 'butt',
+    lineJoin: 'miter',
+    shadowColor: '',
+    shadowBlur: 0,
+  } as unknown as CanvasRenderingContext2D
+  Object.defineProperty(context, 'globalAlpha', {
+    configurable: true,
+    get: () => alphaValues.at(-1) ?? 1,
+    set: (value: number) => { alphaValues.push(value) },
+  })
+  return { context, alphaValues }
+}

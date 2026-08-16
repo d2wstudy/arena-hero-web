@@ -19,6 +19,7 @@ import { getActionAvailability } from '../lib/actionAvailability'
 import { coreDestructionFromEvents } from '../lib/destruction'
 import { applyAutonomousMovement, buildMovementRoutes, findMovementPath, reachableMovementDestinations, readMovementGoals, type MovementGoals, type PathFailure } from '../lib/pathfinding'
 import { mergeCommandPlans, prepareUnitActionPlan } from '../lib/commandPlans'
+import { readTeamFogDisplaySettings, TEAM_FOG_DISPLAY_STORAGE_KEY } from '../lib/teamFogDisplay'
 import type { CommandPlan, CoreAction, Position, UnitAction, WorldObject } from '../lib/types'
 import { positionKey } from '../lib/visibility'
 
@@ -37,6 +38,7 @@ export function ArenaPage({ demo = false, local = false, official = false, local
   const [centerPosition, setCenterPosition] = useState<Position | null>(null)
   const [plan, setPlan] = useState<CommandPlan>({ tick: game.tick ?? 0, unit_actions: {} })
   const [movementGoals, setMovementGoals] = useState<MovementGoals>(() => readMovementGoals(localStorage.getItem(movementStorageKey)))
+  const [teamFogDisplay, setTeamFogDisplay] = useState(() => readTeamFogDisplaySettings(localStorage.getItem(TEAM_FOG_DISPLAY_STORAGE_KEY)))
   const planRef = useRef(plan); const tickRef = useRef(game.tick); const submitQueueRef = useRef<Promise<void>>(Promise.resolve()); const movementGoalsRef = useRef(movementGoals); const autoMovementTickRef = useRef<number | null>(null)
   const respawning = game.state?.status === 'RESPAWNING'
   const readOnly = game.readOnly
@@ -46,6 +48,7 @@ export function ArenaPage({ demo = false, local = false, official = false, local
     const next = { ...movementGoalsRef.current }; delete next[objectId]; replaceMovementGoals(next)
   }, [replaceMovementGoals])
   useEffect(() => { localStorage.setItem(movementStorageKey, JSON.stringify(movementGoals)) }, [movementGoals, movementStorageKey])
+  useEffect(() => { localStorage.setItem(TEAM_FOG_DISPLAY_STORAGE_KEY, JSON.stringify(teamFogDisplay)) }, [teamFogDisplay])
   useEffect(() => { if (game.tick) { const nextPlan = { tick: game.tick, unit_actions: {} }; tickRef.current = game.tick; planRef.current = nextPlan; autoMovementTickRef.current = null; setPlan(nextPlan); setTargetMode(null); setMoveSelecting(false); setMovementError(null) } }, [game.tick])
   useEffect(() => {
     const authoritative = game.receipts[game.submissionSource]
@@ -159,13 +162,13 @@ export function ArenaPage({ demo = false, local = false, official = false, local
   const cancelMovementGoal = (object: WorldObject) => { if (!object.id) return; removeMovementGoal(object.id); if (object.kind === 'CORE') setCoreAction(null); else setUnitAction(object.id, null); select(null) }
   if (!game.state) return <div className="grid h-dvh place-items-center"><div className="text-center"><div className="mx-auto mb-4 size-2 animate-pulse rounded-full bg-cyan-signal shadow-[0_0_14px_rgba(69,145,197,.45)]" /><p className="font-mono text-xs tracking-[.2em] text-zinc-500">{t(`game.${game.phase}`)}</p>{game.error && <p role="alert" className="mt-3 text-xs text-coral-hostile">{getErrorMessage(game.error)}</p>}</div></div>
   return <div className="grid h-dvh min-h-[560px] grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr]">
-    <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} />
+    <AssetList state={game.state} objects={game.state.objects} selectedId={selectedId} onSelect={selectFromAssetList} teamFogDisplay={teamFogDisplay} onTeamFogDisplayChange={setTeamFogDisplay} />
     <section className="relative min-h-0 overflow-hidden">
       {!respawning && local && game.localSession?.mode === 'step' && game.tick && game.liveTick
         ? <LocalStepControl tick={game.tick} liveTick={game.liveTick} phase={game.phase} status={game.localStatus} history={game.localHistory} replay={game.replay} localView={game.localView} observerOnly={game.localSession?.observer_only} observationPending={game.observationPending} godSnapshot={game.godSnapshot} onAdvance={game.advance} onReplay={game.showReplay} onReturnLive={game.returnLive} onBranch={onLocalEdit ? async () => { const selectedTick = game.replay?.tick ?? game.tick; if (selectedTick !== null) onLocalEdit(selectedTick, game.replay?.match_id ?? game.localStatus?.match_id ?? undefined) } : game.branchFromReplay} onObservation={game.setLocalObservation} onLoadGodDiagnostics={game.loadGodDiagnostics} onHumanFullVision={game.setHumanFullVision} onAddParticipant={game.addLocalParticipant} onSetTickLabel={game.setTickLabel} onEditWorld={onLocalEdit} onExitToLobby={onLocalExit} />
         : !respawning && <GameHUD phase={game.phase} stateReceivedAt={game.stateReceivedAt} />}
       {!respawning && !readOnly && game.tick && <PendingCommands tick={game.tick} state={game.state} receipts={game.receipts} />}
-      <WorldCanvas state={game.state} explored={game.explored} replay={Boolean(game.replay)} selectedId={selectedId} targeting={targetMode !== null} destinationSelecting={moveSelecting} attackPositions={attackPositions} targetableIds={targetableIds} routeDestinations={routeDestinations} moveArrows={moveArrows} sweepMarkers={sweepMarkers} shotMarkers={shotMarkers} tacticMovements={tacticMovements} playerFog={game.observation?.view.mode === 'GLOBAL' ? game.observation.player_fog : undefined} centerPosition={centerPosition} centerRequest={centerRequest} zoomRequest={zoomRequest} onSelect={select} onTarget={chooseTarget} onAttackPosition={chooseAttackPosition} onMoveDestination={chooseMoveDestination} onCenterBeacon={() => { setCenterPosition(game.state!.champion_beacon.position); setCenterRequest((value) => value + 1) }} onAnchorChange={setAnchor} onViewportChange={local ? game.setObservationViewport : undefined} />
+      <WorldCanvas state={game.state} explored={game.explored} replay={Boolean(game.replay)} selectedId={selectedId} targeting={targetMode !== null} destinationSelecting={moveSelecting} attackPositions={attackPositions} targetableIds={targetableIds} routeDestinations={routeDestinations} moveArrows={moveArrows} sweepMarkers={sweepMarkers} shotMarkers={shotMarkers} tacticMovements={tacticMovements} playerFog={game.observation?.view.mode === 'GLOBAL' ? game.observation.player_fog : undefined} teamFogDisplay={teamFogDisplay} centerPosition={centerPosition} centerRequest={centerRequest} zoomRequest={zoomRequest} onSelect={select} onTarget={chooseTarget} onAttackPosition={chooseAttackPosition} onMoveDestination={chooseMoveDestination} onCenterBeacon={() => { setCenterPosition(game.state!.champion_beacon.position); setCenterRequest((value) => value + 1) }} onAnchorChange={setAnchor} onViewportChange={local ? game.setObservationViewport : undefined} />
       {!respawning && <ResourceActivity events={game.state.events} />}
       {respawning && <RespawnOverlay destroyedBy={coreDestroyer} selfDestructed={coreSelfDestructed} />}
       {!respawning && !readOnly && selected?.controlled && anchor && actionAvailability && !targetMode && !moveSelecting && <UnitActionDialog anchor={anchor} selected={selected} plan={plan} movementGoal={selected.id ? movementGoals[selected.id] : undefined} phase={game.phase} resources={game.state.resources} population={game.state.population} availability={actionAvailability} onClose={() => select(null)} onTargeting={() => { setMoveSelecting(false); setTargetMode('SHOOT') }} onSweepTargeting={() => { setMoveSelecting(false); setTargetMode('SWEEP') }} onMoveTargeting={() => { setTargetMode(null); setMovementError(null); setMoveSelecting(true) }} onCancelMovementGoal={() => cancelMovementGoal(selected)} onUnitAction={unitAction} onCoreAction={coreAction} />}
