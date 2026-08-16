@@ -177,11 +177,19 @@ describe('LocalArenaPage save flow', () => {
 
     expect(teamInputs[0]).toHaveDisplayValue('Team 1')
     expect(teamInputs[1]).toHaveDisplayValue('Team 2')
+    expect(Array.from((teamInputs[0] as HTMLSelectElement).options, (option) => option.text)).toEqual(['Team 1', 'Team 2'])
+    expect(Array.from((teamInputs[1] as HTMLSelectElement).options, (option) => option.text).some((text) => /new/i.test(text))).toBe(false)
     expect(joinInputs[0]).toHaveValue(0)
     expect(joinInputs[1]).toHaveValue(1)
 
     await user.selectOptions(teamInputs[1], '1')
     expect(teamInputs[1]).toHaveDisplayValue('Team 1')
+
+    await user.selectOptions(teamInputs[1], '2')
+    await user.click(screen.getAllByRole('button', { name: /Remove player/i })[0])
+    const remainingTeam = screen.getByLabelText('Team') as HTMLSelectElement
+    expect(remainingTeam).toHaveDisplayValue('Team 1')
+    expect(Array.from(remainingTeam.options, (option) => option.text)).toEqual(['Team 1'])
   })
 
   it('returns a cancelled new-save editor to the catalog after leaving a running save', async () => {

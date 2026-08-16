@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../../lib/i18n'
@@ -189,6 +189,27 @@ describe('LocalStepControl', () => {
     expect(saveLabel).toHaveBeenCalledWith('root-match', 4, 'Before battle')
     await userEvent.click(screen.getAllByRole('button', { name: 'Live' })[0])
     expect(returnLive).toHaveBeenCalledOnce()
+  })
+
+  it('loads a scrubbed Tick only after the timeline interaction is committed', async () => {
+    const replay: LocalReplay = {
+      match_id: 'root-match', tick: 4, live: false,
+      state: { status: 'ACTIVE', resources: 0, population: 0, champion_beacon: { position: [0, 0] }, objects: [], events: [] },
+      receipts: {}, explored: [], god: { human_full_vision: false },
+    }
+    const showReplay = vi.fn().mockResolvedValue(undefined)
+    render(<LocalStepControl {...baseProps} tick={4} phase="replay" replay={replay} onReplay={showReplay} />)
+    openPanel('History')
+
+    const timeline = screen.getByRole('slider', { name: 'History timeline' })
+    fireEvent.change(timeline, { target: { value: '6' } })
+    expect(timeline).toHaveValue('6')
+    expect(showReplay).not.toHaveBeenCalled()
+
+    fireEvent.pointerUp(timeline)
+    await waitFor(() => expect(showReplay).toHaveBeenCalledWith('root-match', 6))
+    fireEvent.blur(timeline)
+    expect(showReplay).toHaveBeenCalledOnce()
   })
 
   it('loads heavyweight diagnostics only from the Lab and keeps replay operations disabled', async () => {

@@ -64,10 +64,14 @@ export function LocalStepControl({
   const [batchTickText, setBatchTickText] = useState('10')
   const [remainingTicks, setRemainingTicks] = useState(0)
   const [autoTickSecondsText, setAutoTickSecondsText] = useState('1')
+  const [timelineTick, setTimelineTick] = useState(tick)
   const runnerTimerRef = useRef<number | null>(null)
   const advanceInFlightRef = useRef(false)
   const lastAdvanceKeyRef = useRef<string | null>(null)
   const nextAutoDueAtRef = useRef<number | null>(null)
+  const timelineTickRef = useRef(tick)
+  const timelineCommitInFlightRef = useRef(false)
+  const lastTimelineCommitRef = useRef(tick)
   const currentStatus = status?.tick === liveTick ? status : null
   const botsReady = Boolean(currentStatus && currentStatus.bots.every((bot) => bot.ready && !bot.error))
   const botFailed = Boolean(currentStatus?.bots.some((bot) => bot.error))
@@ -107,6 +111,12 @@ export function LocalStepControl({
   useEffect(() => {
     setLabelText(currentLabel)
   }, [currentLabel, selectedMatchId, tick])
+
+  useEffect(() => {
+    timelineTickRef.current = tick
+    lastTimelineCommitRef.current = tick
+    setTimelineTick(tick)
+  }, [selectedMatchId, tick])
 
   const clearRunnerTimer = useCallback(() => {
     if (runnerTimerRef.current === null) return
@@ -221,6 +231,26 @@ export function LocalStepControl({
     await showTick(match.id === history?.active_match_id ? liveTick : match.latest_tick, match.id)
   }
 
+  const updateTimelineTick = (nextTick: number) => {
+    timelineTickRef.current = nextTick
+    setTimelineTick(nextTick)
+  }
+
+  const commitTimelineTick = async () => {
+    const nextTick = timelineTickRef.current
+    if (nextTick === tick || nextTick === lastTimelineCommitRef.current || timelineCommitInFlightRef.current) return
+    timelineCommitInFlightRef.current = true
+    lastTimelineCommitRef.current = nextTick
+    try {
+      await showTick(nextTick)
+    } catch (cause) {
+      lastTimelineCommitRef.current = tick
+      throw cause
+    } finally {
+      timelineCommitInFlightRef.current = false
+    }
+  }
+
   const branch = async () => {
     if (!replay || busy) return
     setBusy('branch')
@@ -264,19 +294,19 @@ export function LocalStepControl({
     { id: 'lab', icon: <FlaskConical size={13} />, label: t('game.controlLab') },
   ]
 
-  return <div className="pointer-events-none absolute right-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] flex-col items-end">
-    <section className="panel pointer-events-auto flex min-h-11 max-w-full items-center gap-1.5 rounded-gold p-1.5 pl-3" aria-label={t('game.localStep')}>
-      <span className="flex min-w-0 items-center gap-2 pr-1 font-mono text-[9px] tracking-[.12em] text-cyan-signal">
-        {replay ? <History size={12} /> : localView.mode === 'GLOBAL' ? <Crown size={12} className="text-amber-200" /> : localView.mode === 'PLAYER' ? <Eye size={12} className="text-violet-300" /> : <Radio size={12} />}
-        <span className="shrink-0">TICK {tick}</span>
+  return <div className="pointer-events-none absolute right-3 top-3 z-30 flex w-[min(31rem,calc(100%_-_1.5rem))] flex-col items-end">
+    <section className="panel pointer-events-auto grid h-12 w-full grid-cols-[5.5rem_minmax(0,1fr)_2.25rem_2.25rem_2.25rem_2.25rem] items-center gap-1.5 rounded-gold p-1.5 sm:grid-cols-[5.75rem_minmax(7rem,1fr)_3.75rem_2.25rem_2.25rem_2.25rem_2.25rem]" aria-label={t('game.localStep')}>
+      <span className="grid h-9 min-w-0 grid-cols-[.75rem_minmax(0,1fr)] items-center gap-1.5 px-1.5 font-mono text-[9px] tracking-[.08em] text-cyan-signal" title={`TICK ${tick}`}>
+        <span className="grid size-3 place-items-center">{replay ? <History size={12} /> : localView.mode === 'GLOBAL' ? <Crown size={12} className="text-amber-200" /> : localView.mode === 'PLAYER' ? <Eye size={12} className="text-violet-300" /> : <Radio size={12} />}</span>
+        <span className="min-w-0 truncate text-right tabular-nums">TICK {tick}</span>
       </span>
-      <button type="button" onClick={() => openTab('view')} className="focus-ring flex min-h-9 min-w-0 items-center gap-1.5 rounded-gold border border-white/10 bg-white/[.025] px-2.5 text-[10px] text-zinc-300 hover:bg-white/[.06]" aria-label={t('game.controlView')}>
-        <Eye size={12} className="shrink-0" /><span className="max-w-28 truncate">{viewLabel}</span>{observationPending && <LoaderCircle size={11} className="shrink-0 animate-spin text-cyan-signal" />}
+      <button type="button" onClick={() => openTab('view')} className="focus-ring grid h-9 min-w-0 grid-cols-[.75rem_minmax(0,1fr)_.75rem] items-center gap-1.5 rounded-gold border border-white/10 bg-white/[.025] px-2 text-[10px] text-zinc-300 hover:bg-white/[.06]" aria-label={t('game.controlView')} title={viewLabel}>
+        <Eye size={12} /><span className="min-w-0 truncate">{viewLabel}</span><span className="grid size-3 place-items-center"><LoaderCircle size={11} aria-hidden={!observationPending} className={observationPending ? 'animate-spin text-cyan-signal' : 'invisible'} /></span>
       </button>
-      {runnerActive && <button type="button" onClick={() => openTab('advance')} className="focus-ring hidden min-h-9 items-center gap-1.5 rounded-full bg-cyan-signal/10 px-2.5 font-mono text-[9px] text-cyan-signal sm:flex">
-        {runMode === 'batch' ? <FastForward size={11} /> : <Timer size={11} />}{runMode === 'batch' ? remainingTicks : `${autoTickSecondsText}s`}
-      </button>}
-      {replay ? <button type="button" onClick={onReturnLive} disabled={busy !== null} className="secondary-button flex min-h-9 items-center gap-1.5 px-2.5 text-[10px]"><RotateCcw size={12} />{t('game.live')}</button> : <button
+      <button type="button" onClick={() => openTab('advance')} disabled={!runnerActive} aria-hidden={!runnerActive} tabIndex={runnerActive ? 0 : -1} className={`focus-ring hidden h-9 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-full bg-cyan-signal/10 px-1.5 font-mono text-[9px] tabular-nums text-cyan-signal sm:flex ${runnerActive ? '' : 'invisible pointer-events-none'}`}>
+        {runMode === 'auto' ? <Timer size={11} className="shrink-0" /> : <FastForward size={11} className="shrink-0" />}<span className="min-w-0 truncate">{runMode === 'batch' ? remainingTicks : `${autoTickSecondsText}s`}</span>
+      </button>
+      {replay ? <button type="button" onClick={onReturnLive} disabled={busy !== null} aria-label={t('game.live')} title={t('game.live')} className="focus-ring grid size-9 place-items-center rounded-gold border border-white/10 text-zinc-300 hover:bg-white/[.06] disabled:text-zinc-600"><RotateCcw size={13} /></button> : <button
         type="button"
         disabled={resolvingDisabled}
         onClick={() => void advance()}
@@ -285,8 +315,8 @@ export function LocalStepControl({
       >
         {busy === 'advance' || phase === 'settling' ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}
       </button>}
-      {onEditWorld && <button type="button" onClick={() => onEditWorld(tick, selectedMatchId ?? undefined)} disabled={controlsLocked} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white disabled:opacity-35" aria-label={t('game.editWorld')} title={t('game.editWorld')}><Settings2 size={14} /></button>}
-      {onExitToLobby && <button type="button" onClick={onExitToLobby} disabled={controlsLocked} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white disabled:opacity-35" aria-label={t('game.returnSaveLobby')} title={t('game.returnSaveLobby')}><FolderOpen size={14} /></button>}
+      <button type="button" onClick={() => onEditWorld?.(tick, selectedMatchId ?? undefined)} disabled={!onEditWorld || controlsLocked} aria-hidden={!onEditWorld} tabIndex={onEditWorld ? 0 : -1} className={`focus-ring grid size-9 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white disabled:text-zinc-600 ${onEditWorld ? '' : 'invisible pointer-events-none'}`} aria-label={t('game.editWorld')} title={t('game.editWorld')}><Settings2 size={14} /></button>
+      <button type="button" onClick={() => onExitToLobby?.()} disabled={!onExitToLobby || controlsLocked} aria-hidden={!onExitToLobby} tabIndex={onExitToLobby ? 0 : -1} className={`focus-ring grid size-9 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white disabled:text-zinc-600 ${onExitToLobby ? '' : 'invisible pointer-events-none'}`} aria-label={t('game.returnSaveLobby')} title={t('game.returnSaveLobby')}><FolderOpen size={14} /></button>
       <button type="button" aria-expanded={drawerOpen} aria-label={t(drawerOpen ? 'game.closeControlPanel' : 'game.openControlPanel')} onClick={() => setDrawerOpen((value) => !value)} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-400 hover:bg-white/[.06] hover:text-white">
         {drawerOpen ? <X size={15} /> : <Menu size={15} />}
       </button>
@@ -298,11 +328,8 @@ export function LocalStepControl({
     </section>}
 
     {drawerOpen && <section className="panel pointer-events-auto mt-2 flex max-h-[calc(100dvh-5rem)] w-[min(25rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-gold shadow-2xl max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:top-auto max-sm:mt-0 max-sm:max-h-[72dvh] max-sm:w-auto" aria-label={t('game.localControlPanel')}>
-      <header className="flex items-center justify-between gap-3 border-b border-white/[.07] px-4 py-3">
-        <div className="min-w-0">
-          <p className="font-mono text-[9px] tracking-[.16em] text-cyan-signal">{t('game.localControlPanel')}</p>
-          <p className="mt-1 truncate text-[10px] text-zinc-500">{replay ? t('game.replayHint') : t('game.compactControlHint')}</p>
-        </div>
+      <header className="flex h-12 items-center justify-between gap-3 border-b border-white/[.07] px-3">
+        <p className="min-w-0 truncate font-mono text-[9px] tracking-[.16em] text-cyan-signal">{t('game.localControlPanel')}</p>
         <button type="button" aria-label={t('game.closeControlPanel')} onClick={() => setDrawerOpen(false)} className="focus-ring grid size-9 shrink-0 place-items-center rounded-gold text-zinc-500 hover:bg-white/[.05] hover:text-white"><X size={14} /></button>
       </header>
       <nav className="grid grid-cols-4 border-b border-white/[.07]" aria-label={t('game.localControlTabs')}>
@@ -359,7 +386,7 @@ export function LocalStepControl({
               <select aria-label={t('game.replayBranch')} value={selectedMatch.id} disabled={controlsLocked} onChange={(event) => void selectMatch(event.target.value)} className="focus-ring min-h-10 w-full rounded-gold border border-white/10 bg-space-900 px-2 text-[10px] text-zinc-300">{history.matches.map((match) => <option key={match.id} value={match.id}>{match.active ? '● ' : ''}{match.label} · {match.id.slice(0, 8)}</option>)}</select>
               <div className="flex items-center gap-2">
                 <button type="button" aria-label={t('game.previousTick')} disabled={!canStepBack || controlsLocked} onClick={() => void showTick(tick - 1)} className="focus-ring grid size-10 shrink-0 place-items-center rounded-gold border border-white/10 text-zinc-400 disabled:opacity-30"><ChevronLeft size={15} /></button>
-                <input type="range" aria-label={t('game.replayTimeline')} min={firstTick} max={latestTick} value={tick} disabled={controlsLocked || firstTick === latestTick} onChange={(event) => void showTick(Number(event.target.value))} className="min-w-24 flex-1 accent-cyan-signal" />
+                <input type="range" aria-label={t('game.replayTimeline')} min={firstTick} max={latestTick} value={timelineTick} disabled={controlsLocked || firstTick === latestTick} onChange={(event) => updateTimelineTick(Number(event.target.value))} onPointerUp={() => { void commitTimelineTick() }} onPointerCancel={() => updateTimelineTick(tick)} onKeyUp={() => { void commitTimelineTick() }} onBlur={() => { void commitTimelineTick() }} className="min-w-24 flex-1 accent-cyan-signal" />
                 <button type="button" aria-label={t('game.nextTick')} disabled={!canStepForward || controlsLocked} onClick={() => void showTick(tick + 1)} className="focus-ring grid size-10 shrink-0 place-items-center rounded-gold border border-white/10 text-zinc-400 disabled:opacity-30"><ChevronRight size={15} /></button>
               </div>
               <p className="text-right font-mono text-[9px] text-zinc-500">{firstTick} — {latestTick}</p>
