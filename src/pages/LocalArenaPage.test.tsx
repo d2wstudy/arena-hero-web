@@ -140,6 +140,9 @@ describe('LocalArenaPage save flow', () => {
     expect(screen.getByLabelText(/Birth time/)).toBeDisabled()
     expect(screen.getByLabelText('Spawn mode')).toBeDisabled()
 
+    await user.click(screen.getByRole('button', { name: /Add player/i }))
+    expect(screen.getAllByLabelText(/Birth time/)[1]).toHaveValue(1)
+
     await user.click(screen.getByRole('button', { name: /Save as branch/i }))
     await waitFor(() => expect(mocks.editLocalSave).toHaveBeenCalledWith(expect.objectContaining({
       save_id: 'save-1',
@@ -180,7 +183,7 @@ describe('LocalArenaPage save flow', () => {
     expect(Array.from((teamInputs[0] as HTMLSelectElement).options, (option) => option.text)).toEqual(['Team 1', 'Team 2'])
     expect(Array.from((teamInputs[1] as HTMLSelectElement).options, (option) => option.text).some((text) => /new/i.test(text))).toBe(false)
     expect(joinInputs[0]).toHaveValue(0)
-    expect(joinInputs[1]).toHaveValue(1)
+    expect(joinInputs[1]).toHaveValue(0)
 
     await user.selectOptions(teamInputs[1], '1')
     expect(teamInputs[1]).toHaveDisplayValue('Team 1')

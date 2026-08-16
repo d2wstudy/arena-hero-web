@@ -212,7 +212,7 @@ function LocalWorldEditor({ context, onCancel, onCompleted }: { context: EditorC
         controller: 'BOT',
         bot_version: '0.0',
         team: current.length + 1,
-        join_offset: current.length ? 1 : 0,
+        join_offset: context.mode === 'CREATE' ? 0 : 1,
         spawn_mode: current.length ? 'RANDOM_ADJACENT' : 'RANDOM',
         distance_n: 1,
         distance_tolerance: 5,
