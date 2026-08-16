@@ -333,6 +333,18 @@ export interface LocalCompactExploration {
   resources: Position[]
 }
 
+export interface LocalCellCoverage {
+  ranges: Array<[y: number, startX: number, endX: number]>
+}
+
+export interface LocalPlayerFog {
+  player_id: string
+  username: string
+  team?: number
+  visibility: LocalCellCoverage
+  exploration: LocalCellCoverage
+}
+
 export interface LocalChunkViewport {
   min_chunk_x: number
   max_chunk_x: number
@@ -372,6 +384,7 @@ export interface LocalObservation {
   view: LocalObservationView
   state: PlayerState
   exploration: LocalCompactExploration
+  player_fog?: LocalPlayerFog[]
   world?: LocalObservationWorld
   tactics?: LocalTacticDiagnostics[]
 }
