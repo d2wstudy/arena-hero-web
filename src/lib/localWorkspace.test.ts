@@ -36,4 +36,8 @@ describe('local workspace state', () => {
 
     expect(workspaceAfterWorldEdit(workspace)).toEqual({ ...workspace, replay: null })
   })
+
+  it('accepts restored overview cameras down to the supported 12px zoom floor', () => {
+    expect(normalizeLocalWorkspaceState({ camera: { x: 4, y: -7, cell: 1 } }).camera).toEqual({ x: 4, y: -7, cell: 12 })
+  })
 })

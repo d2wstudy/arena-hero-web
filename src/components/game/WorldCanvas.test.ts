@@ -59,7 +59,10 @@ describe('wheelZoomCell', () => {
   })
 
   it('clamps zoom to the supported cell range', () => {
-    expect(wheelZoomCell(24, 10_000, 0, 720)).toBe(24)
+    let zoomedOut = 24
+    for (let index = 0; index < 8; index++) zoomedOut = wheelZoomCell(zoomedOut, 10_000, 0, 720)
+    expect(zoomedOut).toBe(12)
+    expect(wheelZoomCell(12, 10_000, 0, 720)).toBe(12)
     expect(wheelZoomCell(78, -10_000, 0, 720)).toBe(78)
   })
 })
@@ -126,6 +129,15 @@ describe('observationChunkViewport', () => {
       max_chunk_x: -1,
       min_chunk_y: 0,
       max_chunk_y: 3,
+    })
+  })
+
+  it('keeps the wider 12px overview bounded to nearby materialized chunks', () => {
+    expect(observationChunkViewport({ x: 0, y: 0, cell: 12 }, { width: 1124, height: 738 })).toEqual({
+      min_chunk_x: -3,
+      max_chunk_x: 2,
+      min_chunk_y: -2,
+      max_chunk_y: 1,
     })
   })
 })

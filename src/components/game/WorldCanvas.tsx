@@ -70,6 +70,7 @@ const SHOT_ANIMATION_MS = 520
 const SELECTION_RIPPLE_MS = 900
 const CAMERA_FRAME_INTERVAL_MS = 1000 / 60
 const ZOOM_SETTLE_MS = 120
+const WORLD_ENTITY_DETAIL_CELL_SIZE = 20
 const TERRAIN_CHUNK_PADDING_CELLS = 1
 const TERRAIN_CACHE_PIXEL_BUDGET = 12_000_000
 const SELECTED_GOLD = '#f6c453'
@@ -449,7 +450,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
         style={{ left: point.left, top: point.top, width: diameter, height: diameter, transform: 'translate(-50%, -50%)' }}
       />
     })}
-    {visibleShotMarkers.map((marker) => {
+    {camera.cell >= WORLD_ENTITY_DETAIL_CELL_SIZE && visibleShotMarkers.map((marker) => {
       const from = worldToScreen(marker.from), to = worldToScreen(marker.to), dx = to.left - from.left, dy = to.top - from.top, length = Math.hypot(dx, dy)
       const ux = dx / length, uy = dy / length, px = -uy, py = ux, side = dx > 0 ? -1 : dx < 0 ? 1 : dy > 0 ? -1 : 1
       const iconSize = Math.max(19, camera.cell * .46), left = from.left + px * side * camera.cell * .31 + ux * camera.cell * .1, top = from.top + py * side * camera.cell * .31 + uy * camera.cell * .1
@@ -818,6 +819,7 @@ function drawWorldEntities(ctx: CanvasRenderingContext2D, size: { width: number;
       drawChampionBeacon(ctx, beaconPoint, camera.cell, state.champion_beacon.status, true, beaconSprite)
       carriedBeaconDrawn = true
     }
+    if (camera.cell < WORLD_ENTITY_DETAIL_CELL_SIZE) continue
     const meterX = placements.reduce((sum, placement) => sum + placement.x, 0) / placements.length
     const meterY = placements.reduce((sum, placement) => sum + placement.y, 0) / placements.length
     const controlledCore = objects.find((object) => object.kind === 'CORE' && object.controlled === true)

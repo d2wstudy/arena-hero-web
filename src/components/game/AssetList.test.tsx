@@ -89,8 +89,8 @@ describe('AssetList', () => {
     const explorationOpacity = screen.getByRole('slider', { name: 'Explored border opacity' })
     expect(visionSwitch).toHaveAttribute('aria-checked', 'true')
     expect(explorationSwitch).toHaveAttribute('aria-checked', 'true')
-    expect(visionOpacity).toHaveValue('9')
-    expect(explorationOpacity).toHaveValue('82')
+    expect(visionOpacity).toHaveValue('20')
+    expect(explorationOpacity).toHaveValue('60')
 
     fireEvent.change(visionOpacity, { target: { value: '35' } })
     fireEvent.change(explorationOpacity, { target: { value: '47' } })
