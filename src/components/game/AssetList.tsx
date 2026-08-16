@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { teamTone } from '../../lib/teamColors'
 import type { PlayerState, WorldObject } from '../../lib/types'
 import { Logo } from '../Logo'
 import { GameStats } from './GameStats'
@@ -25,9 +26,16 @@ export function AssetList({ state, objects, selectedId, onSelect }: { state: Pla
       </div>
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {listed.map((object) => { const artType = object.kind === 'CORE' ? 'CORE' : object.unit_type ?? 'WORKER'; const name = object.kind === 'CORE' ? t('game.units.CORE') : t(`game.units.${object.unit_type}`); return <button key={object.id} onClick={() => onSelect(object)} style={{ contentVisibility: 'auto', containIntrinsicSize: '44px' }} className={`focus-ring mb-0.5 flex min-h-11 w-full items-center gap-2 rounded-gold px-2.5 text-left transition-colors ${selectedId === object.id ? 'bg-indigo-deep/55 text-blue-soft' : 'text-zinc-400 hover:bg-white/[.04] hover:text-zinc-100'}`}>
-        <span className="grid size-7 shrink-0 place-items-center rounded-gold-sm border border-violet-cosmic/15 bg-indigo-deep/45"><UnitArtIcon type={artType} className="size-5" /></span><span className="min-w-0 flex-1"><span className="flex items-baseline gap-1.5"><span className="truncate text-xs font-medium">{name}</span><span className="shrink-0 font-mono text-[9px] text-zinc-600">[{object.position?.join(', ') ?? '—'}]</span></span>{state.view_mode === 'GOD' && object.owner_username && <span className="block truncate font-mono text-[8px] text-violet-300/70">@{object.owner_username}</span>}</span><span className="shrink-0 font-mono text-[9px]">{object.hp} HP</span>
-      </button> })}
+      {listed.map((object) => {
+        const artType = object.kind === 'CORE' ? 'CORE' : object.unit_type ?? 'WORKER'
+        const name = object.kind === 'CORE' ? t('game.units.CORE') : t(`game.units.${object.unit_type}`)
+        const tone = state.view_mode === 'GOD' ? teamTone(object.team) : null
+        return <button key={object.id} onClick={() => onSelect(object)} style={{ contentVisibility: 'auto', containIntrinsicSize: '44px' }} className={`focus-ring mb-0.5 flex min-h-11 w-full items-center gap-2 rounded-gold px-2.5 text-left transition-colors ${selectedId === object.id ? 'bg-indigo-deep/55 text-blue-soft' : 'text-zinc-400 hover:bg-white/[.04] hover:text-zinc-100'}`}>
+          <span style={tone ? { borderColor: tone.color } : undefined} className="grid size-7 shrink-0 place-items-center rounded-gold-sm border border-violet-cosmic/15 bg-indigo-deep/45"><span style={tone ? { filter: tone.filter } : undefined} className="grid size-5 place-items-center"><UnitArtIcon type={artType} className="size-5" /></span></span>
+          <span className="min-w-0 flex-1"><span className="flex items-baseline gap-1.5"><span className="truncate text-xs font-medium">{name}</span><span className="shrink-0 font-mono text-[9px] text-zinc-600">[{object.position?.join(', ') ?? '—'}]</span></span>{state.view_mode === 'GOD' && object.owner_username && <span style={tone ? { color: tone.labelColor } : undefined} className="block truncate font-mono text-[8px] text-violet-300/70">@{object.owner_username}</span>}</span>
+          <span style={tone ? { color: tone.labelColor } : undefined} className="shrink-0 font-mono text-[9px]">{object.hp} HP</span>
+        </button>
+      })}
     </div>
   </aside>
 }

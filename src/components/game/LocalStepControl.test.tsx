@@ -74,7 +74,9 @@ describe('LocalStepControl', () => {
   it('keeps the map clear by default and exposes a collapsible drawer', () => {
     render(<LocalStepControl {...baseProps} />)
     expect(screen.getByRole('spinbutton', { name: 'Tick interval (seconds)' })).toHaveValue(1)
-    expect(screen.getByRole('button', { name: 'Start Auto Tick' })).toBeInTheDocument()
+    const autoTick = screen.getByRole('button', { name: 'Start Auto Tick' })
+    expect(autoTick.querySelector('.lucide-repeat-2')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Resolve Tick 7' }).querySelector('.lucide-play')).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Control panel sections' })).not.toBeInTheDocument()
     openPanel()
     expect(screen.getByRole('navigation', { name: 'Control panel sections' })).toBeInTheDocument()

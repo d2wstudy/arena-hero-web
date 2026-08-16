@@ -1,4 +1,4 @@
-import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, FolderOpen, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, RotateCcw, Save, Settings2, Timer, Trash2, User, X } from 'lucide-react'
+import { Bookmark, Bot, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleX, Crown, Eye, FastForward, FlaskConical, FolderOpen, GitBranch, History, LoaderCircle, Menu, Pause, Play, Radio, Repeat2, RotateCcw, Save, Settings2, Timer, Trash2, User, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LocalGodSnapshot, LocalHistory, LocalMatchStatus, LocalParticipantAdmissionReceipt, LocalReplay, LocalViewSelection, StreamPhase } from '../../lib/types'
@@ -308,7 +308,7 @@ export function LocalStepControl({
       </button> : <div className="grid h-9 min-w-0 grid-cols-1 overflow-hidden rounded-gold border border-white/10 bg-black/15 sm:grid-cols-[minmax(0,1fr)_2.25rem]">
         <label className="relative hidden min-w-0 sm:block"><span className="sr-only">{t('game.autoTickInterval')}</span><Timer size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-600" /><input type="number" inputMode="decimal" min={0} max={MAX_AUTO_INTERVAL_SECONDS} step={0.1} aria-label={t('game.autoTickInterval')} aria-invalid={!validAutoTickSeconds} value={autoTickSecondsText} disabled={Boolean(replay)} onChange={(event) => updateAutoTickSeconds(event.target.value)} className="focus-ring h-full w-full min-w-0 border-0 bg-transparent pl-6 pr-1 font-mono text-[9px] tabular-nums text-zinc-300 disabled:opacity-35" /></label>
         <button type="button" disabled={Boolean(replay) || (runMode === 'idle' && (!readyToAdvance || !validAutoTickSeconds))} onClick={runMode === 'auto' ? stopRunner : startAuto} aria-label={t(runMode === 'auto' ? 'game.stopAutoTick' : 'game.startAutoTick')} title={t(runMode === 'auto' ? 'game.stopAutoTick' : 'game.startAutoTick')} className="focus-ring grid size-9 place-items-center border-white/10 text-blue-soft hover:bg-violet-cosmic/15 disabled:text-zinc-600 sm:border-l">
-          {runMode === 'auto' ? <Pause size={13} /> : <Play size={13} />}
+          {runMode === 'auto' ? <Pause size={13} /> : <Repeat2 size={14} />}
         </button>
       </div>}
       {replay ? <button type="button" onClick={onReturnLive} disabled={busy !== null} aria-label={t('game.live')} title={t('game.live')} className="focus-ring grid size-9 place-items-center rounded-gold border border-white/10 text-zinc-300 hover:bg-white/[.06] disabled:text-zinc-600"><RotateCcw size={13} /></button> : <button
