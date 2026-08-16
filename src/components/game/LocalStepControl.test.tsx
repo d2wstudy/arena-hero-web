@@ -73,6 +73,8 @@ describe('LocalStepControl', () => {
 
   it('keeps the map clear by default and exposes a collapsible drawer', () => {
     render(<LocalStepControl {...baseProps} />)
+    expect(screen.getByRole('spinbutton', { name: 'Tick interval (seconds)' })).toHaveValue(1)
+    expect(screen.getByRole('button', { name: 'Start Auto Tick' })).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Control panel sections' })).not.toBeInTheDocument()
     openPanel()
     expect(screen.getByRole('navigation', { name: 'Control panel sections' })).toBeInTheDocument()
@@ -125,7 +127,6 @@ describe('LocalStepControl', () => {
     const firstRequest = new Promise<void>((resolve) => { releaseFirst = resolve })
     const advance = vi.fn().mockImplementationOnce(() => firstRequest).mockResolvedValue(undefined)
     const { rerender } = render(<LocalStepControl {...baseProps} status={status(true)} onAdvance={advance} />)
-    openPanel('Advance')
 
     fireEvent.click(screen.getByRole('button', { name: 'Start Auto Tick' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(999) })
@@ -153,7 +154,8 @@ describe('LocalStepControl', () => {
     expect(observe).toHaveBeenCalledWith({ mode: 'GLOBAL' })
 
     rerender(<LocalStepControl {...baseProps} status={status(true)} localView={{ mode: 'PLAYER', playerId: 'bot-1' }} observationPending />)
-    expect(screen.getByText(/previous frame stays visible/i)).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'View' })[0]).toHaveAttribute('aria-busy', 'true')
+    expect(screen.queryByText(/previous frame stays visible/i)).not.toBeInTheDocument()
     expect(screen.getByText(/strictly read-only/i)).toBeInTheDocument()
   })
 

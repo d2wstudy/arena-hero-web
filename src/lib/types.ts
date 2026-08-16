@@ -12,6 +12,7 @@ export interface WorldObject {
   controlled?: boolean
   owner_id?: string
   owner_username?: string
+  team?: number
   position?: Position
   hp?: number
   shield?: number

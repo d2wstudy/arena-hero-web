@@ -10,6 +10,7 @@ import { collectEntityPositions, continueOrStartMotionAnimation, interpolatePosi
 import type { MoveArrow } from '../../lib/movementPreview'
 import { OBSTACLE_SPRITE_PATHS, obstacleCellShape, obstacleSpriteIndex, obstacleSpriteRect, type ObstacleCellShape } from '../../lib/obstacleArt'
 import { RESOURCE_SPRITE_PATHS, resourceSpriteIndex, resourceSpriteRect } from '../../lib/resourceArt'
+import { teamTone, type TeamTone } from '../../lib/teamColors'
 import type { LocalChunkViewport, LocalMovementPurpose, LocalTacticMovementIntent, PlayerState, Position, WorldObject } from '../../lib/types'
 import { UNIT_SPRITE_PATHS, unitArtType, unitSpriteRect, type UnitArtType } from '../../lib/unitArt'
 import { computeVisibility, positionKey } from '../../lib/visibility'
@@ -74,6 +75,8 @@ const RESOURCE_GREEN = '#76b889'
 const RESOURCE_GREEN_LIGHT = '#b2d2ba'
 const BEACON_GOLD = '#d9a62e'
 const BEACON_GOLD_LIGHT = '#ffe29a'
+const FRIENDLY_TONE: TeamTone = { key: 'friendly', color: PRIMARY_BLUE, labelColor: PRIMARY_BLUE_LIGHT, filter: 'none' }
+const HOSTILE_TONE: TeamTone = { key: 'hostile', color: HOSTILE_CORAL, labelColor: '#e9a0aa', filter: 'hue-rotate(145deg) saturate(.85) brightness(.92)' }
 interface CachedUnitSprite { canvas: HTMLCanvasElement; width: number; height: number; padding: number }
 interface CachedBeaconSprite { canvas: HTMLCanvasElement; size: number }
 interface TerrainScene {
@@ -740,18 +743,20 @@ function drawWorldEntities(ctx: CanvasRenderingContext2D, size: { width: number;
     if (topMeterObject?.kind === 'CORE') drawCoreResources(ctx, topMeterPlacement.x, topMeterPlacement.y - meterOffset, camera.cell, state.resources, coreResourceCapacity(state.population))
     else if (topMeterObject?.unit_type === 'WORKER' && topMeterObject.cargo !== undefined) drawWorkerCargo(ctx, topMeterPlacement.x, topMeterPlacement.y - meterOffset, camera.cell, topMeterObject.cargo, Math.max(topMeterObject.cargo, beaconBuffActive ? 2 : 1))
     const corePlacement = core ? placements.find(({ object }) => object === core) : undefined
-    if (core?.owner_username && corePlacement) drawCoreOwnerLabel(ctx, corePlacement.x, corePlacement.y - camera.cell * .2, camera.cell, core.owner_username, core.controlled === true)
+    if (core?.owner_username && corePlacement) drawCoreOwnerLabel(ctx, corePlacement.x, corePlacement.y - camera.cell * .2, camera.cell, core.owner_username, objectTone(core))
     const hp = objects.reduce((sum, object) => sum + (object.hp ?? 0), 0)
     const maxHp = objects.reduce((sum, object) => sum + maximumHealth(object), 0)
     if (maxHp > 0) {
-      const color = objects.every((object) => object.controlled === true) ? PRIMARY_BLUE : objects.every((object) => object.controlled === false) ? HOSTILE_CORAL : '#d4d4d8'
+      const tone = sharedObjectTone(objects)
+      const color = tone?.color ?? '#d4d4d8'
+      const labelColor = tone?.labelColor ?? '#d4d4d8'
       if (objects.length > 1) drawStackBadge(ctx, meterX + camera.cell * .36, meterY, camera.cell, objects.length, color)
       if (core?.shield !== undefined) {
         const shieldX = corePlacement?.x ?? meterX
         drawCoreShieldBar(ctx, shieldX, meterY + camera.cell * .34, camera.cell, core.shield, visibleCoreShieldLimit(state, core.id))
-        drawHealthBar(ctx, meterX, meterY + camera.cell * .48, camera.cell, hp, maxHp, color, `${hp} HP`)
+        drawHealthBar(ctx, meterX, meterY + camera.cell * .48, camera.cell, hp, maxHp, color, `${hp} HP`, labelColor)
       } else {
-        drawHealthBar(ctx, meterX, meterY + meterOffset, camera.cell, hp, maxHp, color)
+        drawHealthBar(ctx, meterX, meterY + meterOffset, camera.cell, hp, maxHp, color, undefined, labelColor)
       }
     }
   }
@@ -1051,7 +1056,7 @@ function cachedChampionBeacon(image: HTMLImageElement, cell: number, attached: b
 }
 
 function drawEntity(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, object: WorldObject, selected: boolean, target: boolean, selectionProgress: number, sprites: Partial<Record<UnitArtType, HTMLImageElement>>) {
-  const friendly = object.controlled === true, color = selected ? SELECTED_GOLD : friendly ? PRIMARY_BLUE : HOSTILE_CORAL, size = cell * .24
+  const tone = objectTone(object), color = selected ? SELECTED_GOLD : tone.color, size = cell * .24
   const artType = unitArtType(object)
   const image = artType ? sprites[artType] : undefined
   if (artType && image?.complete && image.naturalWidth > 0) {
@@ -1065,7 +1070,7 @@ function drawEntity(ctx: CanvasRenderingContext2D, x: number, y: number, cell: n
       ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = cell * .24; ctx.filter = 'sepia(1) saturate(2.6) hue-rotate(350deg) brightness(1.12)'
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(image, rect.left, rect.top, rect.width, rect.height); ctx.restore()
     } else {
-      const cached = cachedUnitSprite(image, rect, cell, friendly)
+      const cached = cachedUnitSprite(image, rect, cell, tone)
       ctx.drawImage(cached.canvas, rect.left - cached.padding, rect.top - cached.padding, cached.width, cached.height)
     }
     return
@@ -1078,15 +1083,24 @@ function drawEntity(ctx: CanvasRenderingContext2D, x: number, y: number, cell: n
     ctx.save(); ctx.strokeStyle = HOSTILE_CORAL; ctx.lineWidth = cell * .034; ctx.setLineDash([cell * .07, cell * .07])
     ctx.beginPath(); ctx.arc(x,y,size*1.58,0,Math.PI*2); ctx.stroke(); ctx.restore()
   }
-  ctx.shadowColor = color; ctx.shadowBlur = cell * (selected ? .24 : friendly ? .16 : .11); ctx.fillStyle = selected ? 'rgba(56,38,5,.72)' : '#090909'; ctx.strokeStyle = color; ctx.lineWidth = cell * (selected ? .062 : .045)
+  ctx.shadowColor = color; ctx.shadowBlur = cell * (selected ? .24 : tone.key === 'hostile' ? .11 : .16); ctx.fillStyle = selected ? 'rgba(56,38,5,.72)' : '#090909'; ctx.strokeStyle = color; ctx.lineWidth = cell * (selected ? .062 : .045)
   traceEntityShape(ctx, x, y, size, object); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0
 }
 
-function cachedUnitSprite(image: HTMLImageElement, rect: { width: number; height: number }, cell: number, friendly: boolean): CachedUnitSprite {
+function objectTone(object: WorldObject): TeamTone {
+  return teamTone(object.team) ?? (object.controlled === true ? FRIENDLY_TONE : HOSTILE_TONE)
+}
+
+function sharedObjectTone(objects: WorldObject[]): TeamTone | null {
+  const first = objects[0] ? objectTone(objects[0]) : null
+  return first && objects.every((object) => objectTone(object).key === first.key) ? first : null
+}
+
+function cachedUnitSprite(image: HTMLImageElement, rect: { width: number; height: number }, cell: number, tone: TeamTone): CachedUnitSprite {
   const ratio = Math.min(2, Math.max(1, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1))
-  const blur = cell * (friendly ? .15 : .12), padding = Math.max(2, Math.ceil(blur * 1.8))
+  const blur = cell * (tone.key === 'hostile' ? .12 : .15), padding = Math.max(2, Math.ceil(blur * 1.8))
   const width = rect.width + padding * 2, height = rect.height + padding * 2
-  const key = `${friendly ? 'friendly' : 'hostile'}:${rect.width}x${rect.height}:${Math.round(blur * 10)}:${ratio}`
+  const key = `${tone.key}:${rect.width}x${rect.height}:${Math.round(blur * 10)}:${ratio}`
   let variants = unitSpriteCache.get(image)
   if (!variants) { variants = new Map(); unitSpriteCache.set(image, variants) }
   const existing = variants.get(key)
@@ -1094,8 +1108,8 @@ function cachedUnitSprite(image: HTMLImageElement, rect: { width: number; height
 
   const canvas = document.createElement('canvas'); canvas.width = Math.ceil(width * ratio); canvas.height = Math.ceil(height * ratio)
   const context = canvas.getContext('2d')!; context.setTransform(ratio, 0, 0, ratio, 0, 0); context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high'
-  context.shadowColor = friendly ? PRIMARY_BLUE : HOSTILE_CORAL; context.shadowBlur = blur
-  context.filter = friendly ? 'none' : 'hue-rotate(145deg) saturate(.85) brightness(.92)'
+  context.shadowColor = tone.color; context.shadowBlur = blur
+  context.filter = tone.filter
   context.drawImage(image, padding, padding, rect.width, rect.height)
   const cached = { canvas, width, height, padding }; variants.set(key, cached); return cached
 }
@@ -1147,7 +1161,7 @@ function drawCoreResources(ctx: CanvasRenderingContext2D, x: number, y: number, 
   drawMeterBar(ctx, x, y, cell, resources, capacity, RESOURCE_GREEN, RESOURCE_GREEN_LIGHT)
 }
 
-function drawCoreOwnerLabel(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, username: string, controlled: boolean) {
+function drawCoreOwnerLabel(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, username: string, tone: TeamTone) {
   const label = `@${username}`
   let fontSize = Math.max(8, Math.min(10, cell * .17))
   const maxWidth = cell * .95
@@ -1160,7 +1174,7 @@ function drawCoreOwnerLabel(ctx: CanvasRenderingContext2D, x: number, y: number,
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round'
   ctx.lineWidth = Math.max(2, fontSize * .28); ctx.strokeStyle = 'rgba(0,0,0,.9)'; ctx.strokeText(label, x, y)
-  ctx.fillStyle = controlled ? PRIMARY_BLUE_LIGHT : '#e9a0aa'
+  ctx.fillStyle = tone.labelColor
   ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 2; ctx.shadowOffsetY = 1; ctx.fillText(label, x, y)
   ctx.restore()
 }
@@ -1181,8 +1195,8 @@ function drawCoreShieldBar(ctx: CanvasRenderingContext2D, x: number, y: number, 
   drawMeterBar(ctx, x, y, cell, shield, maxShield, AGENT_VIOLET, '#c7c8e7', `${shield} SHD`)
 }
 
-function drawHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, hp: number, maxHp: number, color: string, label?: string) {
-  drawMeterBar(ctx, x, y, cell, hp, maxHp, color, '#d4d4d8', label)
+function drawHealthBar(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, hp: number, maxHp: number, color: string, label?: string, labelColor = '#d4d4d8') {
+  drawMeterBar(ctx, x, y, cell, hp, maxHp, color, labelColor, label)
 }
 
 function drawMeterBar(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, value: number, maximum: number, color: string, labelColor: string, displayLabel = `${value}/${maximum}`) {
