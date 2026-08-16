@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TeamFogLayer } from '../../lib/teamFog'
 import type { WorldObject } from '../../lib/types'
-import { canvasPixelRatio, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, wheelZoomCell } from '../../lib/worldCanvasPerformance'
+import { canvasPixelRatio, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell } from '../../lib/worldCanvasPerformance'
 import { drawTeamFog } from './WorldCanvas'
 
 const fogLayer: TeamFogLayer = {
   key: 'team:1',
   team: 1,
   playerIds: ['player-1'],
-  visibility: [[0, 0]],
-  exploration: [[0, 0]],
+  visibilityRanges: [[0, -1, 1]],
   boundary: [{ from: [-.5, -.5], to: [.5, -.5] }],
 }
 
@@ -87,6 +86,20 @@ describe('terrainChunkBounds', () => {
   })
 })
 
+describe('terrainRenderProfile', () => {
+  it('reuses quantized terrain caches while zooming inside one detail band', () => {
+    expect(terrainRenderProfile(44, 2)).toEqual({ cell: 40, ratio: 1.5, chunkCells: 8, overview: false })
+    expect(terrainRenderProfile(36, 2)).toEqual({ cell: 40, ratio: 1.5, chunkCells: 8, overview: false })
+    expect(terrainRenderProfile(28, 2)).toEqual({ cell: 24, ratio: 1.5, chunkCells: 8, overview: false })
+    expect(terrainRenderProfile(20, 2)).toEqual({ cell: 24, ratio: 1.5, chunkCells: 8, overview: false })
+  })
+
+  it('uses larger low-resolution terrain chunks for the overview layer', () => {
+    expect(terrainRenderProfile(19, 2)).toEqual({ cell: 12, ratio: 1, chunkCells: 16, overview: true })
+    expect(terrainRenderProfile(12, 2)).toEqual({ cell: 12, ratio: 1, chunkCells: 16, overview: true })
+  })
+})
+
 describe('drawTeamFog', () => {
   it('draws and configures the visibility and exploration layers independently', () => {
     const boundaryOnly = canvasContext()
@@ -108,6 +121,7 @@ describe('drawTeamFog', () => {
       explorationOpacity: .76,
     })
     expect(visibilityOnly.context.fillRect).toHaveBeenCalledOnce()
+    expect(visibilityOnly.context.fillRect).toHaveBeenCalledWith(70, 90, 60, 20)
     expect(visibilityOnly.context.stroke).not.toHaveBeenCalled()
     expect(visibilityOnly.alphaValues).toEqual([.31])
   })

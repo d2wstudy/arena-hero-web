@@ -20,7 +20,16 @@ describe('buildTeamFogLayers', () => {
     ])
 
     expect(layer.playerIds).toEqual(['one', 'two'])
-    expect(layer.visibility).toEqual([[0, 0], [1, 0], [2, 0]])
+    expect(layer.visibilityRanges).toEqual([[0, 0, 2]])
+  })
+
+  it('merges overlapping ranges but preserves gaps on the same row', () => {
+    const [layer] = buildTeamFogLayers([
+      fog('one', 3, [[0, -2, 1], [0, 5, 6]]),
+      fog('two', 3, [[0, 0, 3], [0, 8, 8]]),
+    ])
+
+    expect(layer.visibilityRanges).toEqual([[0, -2, 3], [0, 5, 6], [0, 8, 8]])
   })
 
   it('keeps different teams in independent layers', () => {

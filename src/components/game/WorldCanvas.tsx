@@ -17,7 +17,7 @@ import type { LocalChunkViewport, LocalMovementPurpose, LocalPlayerFog, LocalTac
 import { UNIT_SPRITE_PATHS, unitArtType, unitSpriteRect, type UnitArtType } from '../../lib/unitArt'
 import { computeVisibility, positionKey } from '../../lib/visibility'
 import { WORLD_BACKGROUND_PATH } from '../../lib/worldArt'
-import { canvasPixelRatio, MAX_WORLD_CELL_SIZE, MIN_WORLD_CELL_SIZE, observationChunkViewport, prioritizeSelectionCandidates, TERRAIN_CHUNK_CELLS, terrainChunkBounds, wheelZoomCell, type WorldCamera } from '../../lib/worldCanvasPerformance'
+import { canvasPixelRatio, MAX_WORLD_CELL_SIZE, MIN_WORLD_CELL_SIZE, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell, WORLD_OVERVIEW_CELL_SIZE, type WorldCamera } from '../../lib/worldCanvasPerformance'
 import { BeaconDirectionIndicator } from './BeaconDirectionIndicator'
 import { MapFeatureInfo } from './MapFeatureInfo'
 import type { MapAnchor } from './UnitActionDialog'
@@ -70,7 +70,6 @@ const SHOT_ANIMATION_MS = 520
 const SELECTION_RIPPLE_MS = 900
 const CAMERA_FRAME_INTERVAL_MS = 1000 / 60
 const ZOOM_SETTLE_MS = 120
-const WORLD_ENTITY_DETAIL_CELL_SIZE = 20
 const TERRAIN_CHUNK_PADDING_CELLS = 1
 const TERRAIN_CACHE_PIXEL_BUDGET = 12_000_000
 const SELECTED_GOLD = '#f6c453'
@@ -98,7 +97,10 @@ interface CachedTerrainTile { canvas: HTMLCanvasElement; pixels: number; cell: n
 interface TerrainTileCache {
   cell: number
   ratio: number
+  chunkCells: number
+  overview: boolean
   spriteSignature: string
+  scene: TerrainScene
   pixels: number
   tiles: Map<string, CachedTerrainTile>
 }
@@ -145,7 +147,6 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
   const [unitSprites, setUnitSprites] = useState<Partial<Record<UnitArtType, HTMLImageElement>>>({})
   const [beaconSprite, setBeaconSprite] = useState<HTMLImageElement | null>(null)
   const [inspectedFeature, setInspectedFeature] = useState<MapFeatureView | null>(null)
-  const [zooming, setZooming] = useState(false)
   const drag = useRef<{ x: number; y: number; cameraX: number; cameraY: number; moved: boolean } | null>(null)
   const previousPositionsRef = useRef<Map<string, Position>>(new Map())
   const activeMovementRef = useRef<EntityMotionAnimation | null>(null)
@@ -223,12 +224,10 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     onCameraChange?.({ ...next })
   }, [onCameraChange])
   const scheduleZoom = useCallback((nextCell: (current: number) => number) => {
-    setZooming(true)
     scheduleCamera((current) => ({ ...current, cell: nextCell(current.cell) }))
     if (zoomEndTimeoutRef.current !== null) window.clearTimeout(zoomEndTimeoutRef.current)
     zoomEndTimeoutRef.current = window.setTimeout(() => {
       zoomEndTimeoutRef.current = null
-      setZooming(false)
       publishCurrentCamera()
     }, ZOOM_SETTLE_MS)
   }, [publishCurrentCamera, scheduleCamera])
@@ -321,7 +320,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     const compositeBuffer = ensureCanvasBuffer(compositeBufferRef, pixelWidth, pixelHeight)
     const backgroundContext = backgroundBuffer.getContext('2d'); if (!backgroundContext) return
     backgroundContext.setTransform(ratio, 0, 0, ratio, 0, 0)
-    drawTiledWorldTerrain(backgroundContext, size, camera, ratio, terrainScene, terrainCacheRef, zooming)
+    drawTiledWorldTerrain(backgroundContext, size, camera, ratio, terrainScene, terrainCacheRef)
     drawTeamFog(backgroundContext, size, camera, teamFogLayers, teamFogDisplay)
     drawWorldPlanMarkers(backgroundContext, size, camera, tacticMovements, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition)
     const entityContext = entityBuffer.getContext('2d'); if (!entityContext) return
@@ -381,7 +380,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     }
     renderFrame(performance.now())
     return () => { if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current); animationFrameRef.current = null }
-  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, replay, selectedId, targetableIds, tacticMovements, teamFogLayers, teamFogDisplay, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition, zooming])
+  }, [size, camera, state, terrainScene, unitSprites, beaconSprite, entityGroupsByPosition, replay, selectedId, targetableIds, tacticMovements, teamFogLayers, teamFogDisplay, routeDestinationsByPosition, moveArrowsByPosition, sweepMarkersByPosition, shotMarkersByPosition])
   useEffect(() => {
     const selected = entities.find((object) => object.id === selectedId)
     if (!selected?.position) { onAnchorChange(null); return }
@@ -450,7 +449,7 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
         style={{ left: point.left, top: point.top, width: diameter, height: diameter, transform: 'translate(-50%, -50%)' }}
       />
     })}
-    {camera.cell >= WORLD_ENTITY_DETAIL_CELL_SIZE && visibleShotMarkers.map((marker) => {
+    {camera.cell >= WORLD_OVERVIEW_CELL_SIZE && visibleShotMarkers.map((marker) => {
       const from = worldToScreen(marker.from), to = worldToScreen(marker.to), dx = to.left - from.left, dy = to.top - from.top, length = Math.hypot(dx, dy)
       const ux = dx / length, uy = dy / length, px = -uy, py = ux, side = dx > 0 ? -1 : dx < 0 ? 1 : dy > 0 ? -1 : 1
       const iconSize = Math.max(19, camera.cell * .46), left = from.left + px * side * camera.cell * .31 + ux * camera.cell * .1, top = from.top + py * side * camera.cell * .31 + uy * camera.cell * .1
@@ -479,46 +478,53 @@ function drawTiledWorldTerrain(
   ratio: number,
   scene: TerrainScene,
   cacheRef: { current: TerrainTileCache | null },
-  allowScaledCache: boolean,
 ) {
+  const profile = terrainRenderProfile(camera.cell, ratio)
   let cache = cacheRef.current
-  const spriteSignature = `${scene.obstacleSprites.map((sprite) => sprite.src).join('|')}::${scene.resourceSprites.map((sprite) => sprite.src).join('|')}`
-  if (!cache || (!allowScaledCache && cache.cell !== camera.cell) || cache.ratio !== ratio || cache.spriteSignature !== spriteSignature) {
+  const spriteSignature = profile.overview ? 'overview' : `${scene.obstacleSprites.map((sprite) => sprite.src).join('|')}::${scene.resourceSprites.map((sprite) => sprite.src).join('|')}`
+  if (!cache
+    || cache.cell !== profile.cell
+    || cache.ratio !== profile.ratio
+    || cache.chunkCells !== profile.chunkCells
+    || cache.overview !== profile.overview
+    || cache.spriteSignature !== spriteSignature) {
     if (cache) releaseTerrainTiles(cache)
-    cache = { cell: camera.cell, ratio, spriteSignature, pixels: 0, tiles: new Map() }
+    cache = { ...profile, spriteSignature, scene, pixels: 0, tiles: new Map() }
     cacheRef.current = cache
   }
+  const sceneChanged = cache.scene !== scene
+  cache.scene = scene
 
   ctx.clearRect(0, 0, size.width, size.height)
-  const bounds = terrainChunkBounds(camera, size)
+  const bounds = terrainChunkBounds(camera, size, cache.chunkCells)
   const visibleKeys = new Set<string>()
-  const chunkWorldSize = TERRAIN_CHUNK_CELLS * camera.cell
+  const chunkWorldSize = cache.chunkCells * camera.cell
 
   for (let chunkY = bounds.minY; chunkY <= bounds.maxY; chunkY++) {
     for (let chunkX = bounds.minX; chunkX <= bounds.maxX; chunkX++) {
       const key = `${chunkX},${chunkY}`
       visibleKeys.add(key)
-      const revision = terrainChunkRevision(chunkX, chunkY, scene)
       let tile = cache.tiles.get(key)
+      const revision = !tile || sceneChanged ? terrainChunkRevision(chunkX, chunkY, cache.chunkCells, scene) : tile.revision
       if (!tile || tile.revision !== revision) {
         if (tile) {
           cache.pixels -= tile.pixels
           tile.canvas.width = 1
           tile.canvas.height = 1
         }
-        tile = createTerrainTile(chunkX, chunkY, allowScaledCache ? camera.cell : cache.cell, ratio, revision, scene)
+        tile = createTerrainTile(chunkX, chunkY, cache.cell, cache.ratio, cache.chunkCells, cache.overview, revision, scene)
         cache.tiles.set(key, tile)
         cache.pixels += tile.pixels
       } else {
         cache.tiles.delete(key)
         cache.tiles.set(key, tile)
       }
-      const worldLeft = chunkX * TERRAIN_CHUNK_CELLS - .5
-      const worldTop = chunkY * TERRAIN_CHUNK_CELLS - .5
+      const worldLeft = chunkX * cache.chunkCells - .5
+      const worldTop = chunkY * cache.chunkCells - .5
       const screenX = size.width / 2 + (worldLeft - camera.x) * camera.cell
       const screenY = size.height / 2 + (worldTop - camera.y) * camera.cell
-      const sourceOffset = TERRAIN_CHUNK_PADDING_CELLS * tile.cell * ratio
-      const sourceSize = TERRAIN_CHUNK_CELLS * tile.cell * ratio
+      const sourceOffset = TERRAIN_CHUNK_PADDING_CELLS * tile.cell * cache.ratio
+      const sourceSize = cache.chunkCells * tile.cell * cache.ratio
       ctx.drawImage(tile.canvas, sourceOffset, sourceOffset, sourceSize, sourceSize, screenX, screenY, chunkWorldSize, chunkWorldSize)
     }
   }
@@ -526,8 +532,8 @@ function drawTiledWorldTerrain(
   evictTerrainTiles(cache, visibleKeys)
 }
 
-function createTerrainTile(chunkX: number, chunkY: number, cell: number, ratio: number, revision: string, scene: TerrainScene): CachedTerrainTile {
-  const paddedCells = TERRAIN_CHUNK_CELLS + TERRAIN_CHUNK_PADDING_CELLS * 2
+function createTerrainTile(chunkX: number, chunkY: number, cell: number, ratio: number, chunkCells: number, overview: boolean, revision: string, scene: TerrainScene): CachedTerrainTile {
+  const paddedCells = chunkCells + TERRAIN_CHUNK_PADDING_CELLS * 2
   const cssSize = paddedCells * cell
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(cssSize * ratio))
@@ -535,24 +541,24 @@ function createTerrainTile(chunkX: number, chunkY: number, cell: number, ratio: 
   const context = canvas.getContext('2d')
   if (!context) return { canvas, pixels: canvas.width * canvas.height, cell, revision }
   context.setTransform(ratio, 0, 0, ratio, 0, 0)
-  const firstX = chunkX * TERRAIN_CHUNK_CELLS
-  const firstY = chunkY * TERRAIN_CHUNK_CELLS
+  const firstX = chunkX * chunkCells
+  const firstY = chunkY * chunkCells
   const tileCamera: Camera = {
-    x: firstX + (TERRAIN_CHUNK_CELLS - 1) / 2,
-    y: firstY + (TERRAIN_CHUNK_CELLS - 1) / 2,
+    x: firstX + (chunkCells - 1) / 2,
+    y: firstY + (chunkCells - 1) / 2,
     cell,
   }
-  drawWorldTerrain(context, { width: cssSize, height: cssSize }, tileCamera, scene)
+  drawWorldTerrain(context, { width: cssSize, height: cssSize }, tileCamera, scene, overview)
   return { canvas, pixels: canvas.width * canvas.height, cell, revision }
 }
 
-function terrainChunkRevision(chunkX: number, chunkY: number, scene: TerrainScene) {
-  const firstX = chunkX * TERRAIN_CHUNK_CELLS
-  const firstY = chunkY * TERRAIN_CHUNK_CELLS
+function terrainChunkRevision(chunkX: number, chunkY: number, chunkCells: number, scene: TerrainScene) {
+  const firstX = chunkX * chunkCells
+  const firstY = chunkY * chunkCells
   const margin = TERRAIN_CHUNK_PADDING_CELLS + 2
   let revision = ''
-  for (let y = firstY - margin; y < firstY + TERRAIN_CHUNK_CELLS + margin; y++) {
-    for (let x = firstX - margin; x < firstX + TERRAIN_CHUNK_CELLS + margin; x++) {
+  for (let y = firstY - margin; y < firstY + chunkCells + margin; y++) {
+    for (let x = firstX - margin; x < firstX + chunkCells + margin; x++) {
       const key = `${x},${y}`
       const memory = scene.explored.get(key)?.kind
       const code = (scene.visible.has(key) ? 1 : 0)
@@ -586,7 +592,7 @@ function releaseTerrainTiles(cache: TerrainTileCache) {
   cache.pixels = 0
 }
 
-function drawWorldTerrain(ctx: CanvasRenderingContext2D, size: { width: number; height: number }, camera: Camera, scene: TerrainScene) {
+function drawWorldTerrain(ctx: CanvasRenderingContext2D, size: { width: number; height: number }, camera: Camera, scene: TerrainScene, overview: boolean) {
   const { explored, visible, visibleObstacleCells, visibleResourceCells, obstacleSprites, resourceSprites } = scene
   ctx.clearRect(0, 0, size.width, size.height); ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(0, 0, size.width, size.height)
   const toScreen = ([x, y]: Position) => [size.width / 2 + (x - camera.x) * camera.cell, size.height / 2 + (y - camera.y) * camera.cell] as const
@@ -597,7 +603,25 @@ function drawWorldTerrain(ctx: CanvasRenderingContext2D, size: { width: number; 
     if (!isVisible && !memory) continue
     const [sx, sy] = toScreen([x, y]); const half = camera.cell / 2
     ctx.fillStyle = isVisible ? 'rgba(13,13,15,.82)' : 'rgba(5,5,5,.9)'; ctx.fillRect(sx - half, sy - half, camera.cell, camera.cell)
-    ctx.strokeStyle = isVisible ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.05)'; ctx.lineWidth = 1; ctx.strokeRect(sx - half + .5, sy - half + .5, camera.cell - 1, camera.cell - 1)
+    if (!overview) {
+      ctx.strokeStyle = isVisible ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.05)'; ctx.lineWidth = 1; ctx.strokeRect(sx - half + .5, sy - half + .5, camera.cell - 1, camera.cell - 1)
+    }
+  }
+  if (overview) {
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      const key = positionKey([x, y]), memory = explored.get(key), isVisible = visible.has(key)
+      const obstacle = visibleObstacleCells.has(key) || explored.get(key)?.kind === 'OBSTACLE'
+      const resource = visibleResourceCells.has(key) || (!isVisible && memory?.kind === 'RESOURCE')
+      if (!obstacle && !resource) continue
+      const [screenX, screenY] = toScreen([x, y])
+      const radius = Math.max(1.5, camera.cell * (obstacle ? .22 : .18))
+      ctx.fillStyle = obstacle ? (isVisible ? '#6b7079' : '#303239') : (isVisible ? RESOURCE_GREEN_LIGHT : '#365442')
+      ctx.beginPath()
+      if (obstacle) ctx.rect(screenX - radius, screenY - radius, radius * 2, radius * 2)
+      else { ctx.moveTo(screenX, screenY - radius); ctx.lineTo(screenX + radius, screenY); ctx.lineTo(screenX, screenY + radius); ctx.lineTo(screenX - radius, screenY); ctx.closePath() }
+      ctx.fill()
+    }
+    return
   }
   const renderedObstacles: ObstacleRenderCell[] = []
   const renderedResources: { position: Position; x: number; y: number; visible: boolean }[] = []
@@ -648,10 +672,12 @@ export function drawTeamFog(
       ctx.save()
       ctx.fillStyle = tone.color
       ctx.globalAlpha = visibilityOpacity
-      for (const position of layer.visibility) {
-        if (position[0] < minX || position[0] > maxX || position[1] < minY || position[1] > maxY) continue
-        const [x, y] = toScreen(position)
-        ctx.fillRect(x - camera.cell / 2, y - camera.cell / 2, camera.cell, camera.cell)
+      for (const [y, startX, endX] of layer.visibilityRanges) {
+        if (y < minY || y > maxY || endX < minX || startX > maxX) continue
+        const clippedStart = Math.max(startX, Math.floor(minX))
+        const clippedEnd = Math.min(endX, Math.ceil(maxX))
+        const [x, screenY] = toScreen([clippedStart, y])
+        ctx.fillRect(x - camera.cell / 2, screenY - camera.cell / 2, (clippedEnd - clippedStart + 1) * camera.cell, camera.cell)
       }
       ctx.restore()
     }
@@ -739,9 +765,9 @@ function drawTacticMovementIntents(
     ctx.fillStyle = color
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.lineWidth = Math.max(1.5, camera.cell * .04)
+    ctx.lineWidth = Math.max(.75, camera.cell * .02)
     ctx.shadowColor = color
-    ctx.shadowBlur = Math.max(2, camera.cell * .055)
+    ctx.shadowBlur = Math.max(1, camera.cell * .028)
     ctx.globalAlpha = movement.blocked ? .72 : .78
 
     if (movement.path.length > 1) {
@@ -802,7 +828,7 @@ function drawWorldEntities(ctx: CanvasRenderingContext2D, size: { width: number;
   for (const objects of entityGroups) {
     const selected = objects.find((object) => object.id === selectedId)
     const ordered = selected ? [...objects.filter((object) => object !== selected), selected] : objects
-    const displayed = ordered.slice(0, 4), offsetStep = camera.cell * .065
+    const displayed = ordered.slice(0, 4), offsetStep = camera.cell < WORLD_OVERVIEW_CELL_SIZE ? Math.max(2, camera.cell * .16) : camera.cell * .065
     const placements = displayed.map((object, index) => {
       const offset = (index - (displayed.length - 1) / 2) * offsetStep
       const motion = object.id ? motions.get(object.id) : undefined
@@ -819,7 +845,7 @@ function drawWorldEntities(ctx: CanvasRenderingContext2D, size: { width: number;
       drawChampionBeacon(ctx, beaconPoint, camera.cell, state.champion_beacon.status, true, beaconSprite)
       carriedBeaconDrawn = true
     }
-    if (camera.cell < WORLD_ENTITY_DETAIL_CELL_SIZE) continue
+    if (camera.cell < WORLD_OVERVIEW_CELL_SIZE) continue
     const meterX = placements.reduce((sum, placement) => sum + placement.x, 0) / placements.length
     const meterY = placements.reduce((sum, placement) => sum + placement.y, 0) / placements.length
     const controlledCore = objects.find((object) => object.kind === 'CORE' && object.controlled === true)
@@ -1144,6 +1170,10 @@ function cachedChampionBeacon(image: HTMLImageElement, cell: number, attached: b
 }
 
 function drawEntity(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, object: WorldObject, selected: boolean, target: boolean, selectionProgress: number, sprites: Partial<Record<UnitArtType, HTMLImageElement>>) {
+  if (cell < WORLD_OVERVIEW_CELL_SIZE) {
+    drawOverviewEntity(ctx, x, y, cell, object, selected, target)
+    return
+  }
   const tone = objectTone(object), color = selected ? SELECTED_GOLD : tone.color, size = cell * .24
   const artType = unitArtType(object)
   const image = artType ? sprites[artType] : undefined
@@ -1173,6 +1203,29 @@ function drawEntity(ctx: CanvasRenderingContext2D, x: number, y: number, cell: n
   }
   ctx.shadowColor = color; ctx.shadowBlur = cell * (selected ? .24 : tone.key === 'hostile' ? .11 : .16); ctx.fillStyle = selected ? 'rgba(56,38,5,.72)' : '#090909'; ctx.strokeStyle = color; ctx.lineWidth = cell * (selected ? .062 : .045)
   traceEntityShape(ctx, x, y, size, object); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0
+}
+
+function drawOverviewEntity(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, object: WorldObject, selected: boolean, target: boolean) {
+  const tone = objectTone(object)
+  const core = object.kind === 'CORE'
+  const radius = core ? Math.max(3, cell * .27) : Math.max(2, cell * .18)
+  ctx.save()
+  ctx.fillStyle = tone.labelColor
+  ctx.shadowColor = tone.color
+  ctx.shadowBlur = core ? 6 : 4
+  ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill()
+  ctx.shadowBlur = 0
+  if (core) {
+    ctx.strokeStyle = tone.color
+    ctx.lineWidth = 1.25
+    ctx.beginPath(); ctx.arc(x, y, radius + 1.75, 0, Math.PI * 2); ctx.stroke()
+  }
+  if (selected || target) {
+    ctx.strokeStyle = selected ? SELECTED_GOLD : HOSTILE_CORAL
+    ctx.lineWidth = 2
+    ctx.beginPath(); ctx.arc(x, y, radius + 3, 0, Math.PI * 2); ctx.stroke()
+  }
+  ctx.restore()
 }
 
 function objectTone(object: WorldObject): TeamTone {

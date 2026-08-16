@@ -9,8 +9,7 @@ export interface TeamFogLayer {
   key: string
   team: number
   playerIds: string[]
-  visibility: Position[]
-  exploration: Position[]
+  visibilityRanges: LocalPlayerFog['visibility']['ranges']
   boundary: TeamFogBoundaryEdge[]
 }
 
@@ -18,7 +17,7 @@ interface MutableTeamFogLayer {
   key: string
   team: number
   playerIds: string[]
-  visibility: Map<string, Position>
+  visibility: Map<number, Array<[startX: number, endX: number]>>
   exploration: Map<string, Position>
 }
 
@@ -44,21 +43,19 @@ export function buildTeamFogLayers(players: LocalPlayerFog[]): TeamFogLayer[] {
       groups.set(key, group)
     }
     group.playerIds.push(player.player_id)
-    addRanges(group.visibility, player.visibility.ranges)
-    addRanges(group.exploration, player.exploration.ranges)
+    addCoverageRanges(group.visibility, player.visibility.ranges)
+    addCells(group.exploration, player.exploration.ranges)
   }
 
   return [...groups.values()]
     .sort((left, right) => left.team - right.team || left.key.localeCompare(right.key))
     .map((group) => {
-      const visibility = sortedPositions(group.visibility.values())
       const exploration = sortedPositions(group.exploration.values())
       return {
         key: group.key,
         team: group.team,
         playerIds: [...group.playerIds].sort(),
-        visibility,
-        exploration,
+        visibilityRanges: mergedCoverageRanges(group.visibility),
         boundary: explorationBoundaryEdges(exploration),
       }
     })
@@ -77,7 +74,35 @@ export function explorationBoundaryEdges(cells: Iterable<Position>): TeamFogBoun
   return edges
 }
 
-function addRanges(target: Map<string, Position>, ranges: LocalPlayerFog['visibility']['ranges']) {
+function addCoverageRanges(target: Map<number, Array<[startX: number, endX: number]>>, ranges: LocalPlayerFog['visibility']['ranges']) {
+  for (const [y, startX, endX] of ranges) {
+    const row = target.get(y)
+    if (row) row.push([startX, endX])
+    else target.set(y, [[startX, endX]])
+  }
+}
+
+function mergedCoverageRanges(rows: Map<number, Array<[startX: number, endX: number]>>): LocalPlayerFog['visibility']['ranges'] {
+  const merged: LocalPlayerFog['visibility']['ranges'] = []
+  for (const y of [...rows.keys()].sort((left, right) => left - right)) {
+    const intervals = [...rows.get(y)!].sort((left, right) => left[0] - right[0] || left[1] - right[1])
+    let [start, end] = intervals[0]
+    for (let index = 1; index < intervals.length; index++) {
+      const [nextStart, nextEnd] = intervals[index]
+      if (nextStart <= end + 1) {
+        end = Math.max(end, nextEnd)
+        continue
+      }
+      merged.push([y, start, end])
+      start = nextStart
+      end = nextEnd
+    }
+    merged.push([y, start, end])
+  }
+  return merged
+}
+
+function addCells(target: Map<string, Position>, ranges: LocalPlayerFog['visibility']['ranges']) {
   for (const [y, startX, endX] of ranges) {
     for (let x = startX; x <= endX; x++) {
       const position: Position = [x, y]

@@ -10,9 +10,18 @@ const WHEEL_ZOOM_SENSITIVITY = 0.0015
 
 export const MIN_WORLD_CELL_SIZE = 12
 export const MAX_WORLD_CELL_SIZE = 78
+export const WORLD_OVERVIEW_CELL_SIZE = 20
 
 export const TERRAIN_CHUNK_CELLS = 8
+export const OVERVIEW_TERRAIN_CHUNK_CELLS = 16
 export const WORLD_CHUNK_CELLS = 32
+
+export interface TerrainRenderProfile {
+  cell: number
+  ratio: number
+  chunkCells: number
+  overview: boolean
+}
 
 export interface WorldCamera {
   x: number
@@ -39,17 +48,27 @@ export function wheelZoomCell(cell: number, deltaY: number, deltaMode: number, v
   return Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, next))
 }
 
-export function terrainChunkBounds(camera: WorldCamera, size: { width: number; height: number }) {
+export function terrainRenderProfile(cell: number, pixelRatio: number): TerrainRenderProfile {
+  const overview = cell < WORLD_OVERVIEW_CELL_SIZE
+  return {
+    cell: overview ? MIN_WORLD_CELL_SIZE : cell < 32 ? 24 : cell < 52 ? 40 : 64,
+    ratio: overview ? 1 : Math.min(1.5, Math.max(1, pixelRatio)),
+    chunkCells: overview ? OVERVIEW_TERRAIN_CHUNK_CELLS : TERRAIN_CHUNK_CELLS,
+    overview,
+  }
+}
+
+export function terrainChunkBounds(camera: WorldCamera, size: { width: number; height: number }, chunkCells = TERRAIN_CHUNK_CELLS) {
   const margin = 1
   const minWorldX = Math.floor(camera.x - size.width / camera.cell / 2) - margin
   const maxWorldX = Math.ceil(camera.x + size.width / camera.cell / 2) + margin
   const minWorldY = Math.floor(camera.y - size.height / camera.cell / 2) - margin
   const maxWorldY = Math.ceil(camera.y + size.height / camera.cell / 2) + margin
   return {
-    minX: Math.floor(minWorldX / TERRAIN_CHUNK_CELLS),
-    maxX: Math.floor(maxWorldX / TERRAIN_CHUNK_CELLS),
-    minY: Math.floor(minWorldY / TERRAIN_CHUNK_CELLS),
-    maxY: Math.floor(maxWorldY / TERRAIN_CHUNK_CELLS),
+    minX: Math.floor(minWorldX / chunkCells),
+    maxX: Math.floor(maxWorldX / chunkCells),
+    minY: Math.floor(minWorldY / chunkCells),
+    maxY: Math.floor(maxWorldY / chunkCells),
   }
 }
 
