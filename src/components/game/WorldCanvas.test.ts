@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TeamFogLayer } from '../../lib/teamFog'
 import type { WorldObject } from '../../lib/types'
 import { canvasPixelRatio, observationChunkViewport, prioritizeSelectionCandidates, terrainChunkBounds, terrainRenderProfile, wheelZoomCell } from '../../lib/worldCanvasPerformance'
-import { drawTeamFog } from './WorldCanvas'
+import { bindMapWheelZoom, drawTeamFog } from './WorldCanvas'
 
 const fogLayer: TeamFogLayer = {
   key: 'team:1',
@@ -63,6 +63,26 @@ describe('wheelZoomCell', () => {
     expect(zoomedOut).toBe(12)
     expect(wheelZoomCell(12, 10_000, 0, 720)).toBe(12)
     expect(wheelZoomCell(78, -10_000, 0, 720)).toBe(78)
+  })
+})
+
+describe('bindMapWheelZoom', () => {
+  it('cancels browser zoom for trackpad pinch wheel events', () => {
+    const target = document.createElement('div')
+    const addEventListener = vi.spyOn(target, 'addEventListener')
+    const onWheel = vi.fn()
+    const unbind = bindMapWheelZoom(target, onWheel)
+    const event = new WheelEvent('wheel', { deltaY: -12, ctrlKey: true, cancelable: true })
+
+    target.dispatchEvent(event)
+
+    expect(addEventListener).toHaveBeenCalledWith('wheel', expect.any(Function), { passive: false })
+    expect(event.defaultPrevented).toBe(true)
+    expect(onWheel).toHaveBeenCalledWith(event)
+
+    unbind()
+    target.dispatchEvent(new WheelEvent('wheel', { deltaY: -12, ctrlKey: true, cancelable: true }))
+    expect(onWheel).toHaveBeenCalledOnce()
   })
 })
 

@@ -81,6 +81,8 @@ const RESOURCE_GREEN = '#76b889'
 const RESOURCE_GREEN_LIGHT = '#b2d2ba'
 const BEACON_GOLD = '#d9a62e'
 const BEACON_GOLD_LIGHT = '#ffe29a'
+const OVERVIEW_OBSTACLE_VISIBLE = 'rgba(124,130,140,.42)'
+const OVERVIEW_OBSTACLE_EXPLORED = 'rgba(86,91,101,.32)'
 const FRIENDLY_TONE: TeamTone = { key: 'friendly', color: PRIMARY_BLUE, labelColor: PRIMARY_BLUE_LIGHT, filter: 'none' }
 const HOSTILE_TONE: TeamTone = { key: 'hostile', color: HOSTILE_CORAL, labelColor: '#e9a0aa', filter: 'hue-rotate(145deg) saturate(.85) brightness(.92)' }
 interface CachedUnitSprite { canvas: HTMLCanvasElement; width: number; height: number; padding: number }
@@ -106,6 +108,15 @@ interface TerrainTileCache {
 }
 const unitSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedUnitSprite>>()
 const beaconSpriteCache = new WeakMap<HTMLImageElement, Map<string, CachedBeaconSprite>>()
+
+export function bindMapWheelZoom(target: HTMLElement, onWheel: (event: WheelEvent) => void) {
+  const handleWheel = (event: WheelEvent) => {
+    event.preventDefault()
+    onWheel(event)
+  }
+  target.addEventListener('wheel', handleWheel, { passive: false })
+  return () => target.removeEventListener('wheel', handleWheel)
+}
 
 function ensureCanvasBuffer(ref: { current: HTMLCanvasElement | null }, width: number, height: number) {
   const canvas = ref.current ?? document.createElement('canvas')
@@ -310,6 +321,13 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
   useEffect(() => {
     if (zoomRequest) scheduleZoom((current) => Math.min(MAX_WORLD_CELL_SIZE, Math.max(MIN_WORLD_CELL_SIZE, current + Math.sign(zoomRequest) * 8)))
   }, [scheduleZoom, zoomRequest])
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    return bindMapWheelZoom(container, ({ deltaY, deltaMode }) => {
+      scheduleZoom((current) => wheelZoomCell(current, deltaY, deltaMode, size.height))
+    })
+  }, [scheduleZoom, size.height])
   useLayoutEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || size.width <= 0 || size.height <= 0) return
@@ -426,14 +444,9 @@ export function WorldCanvas({ state, explored, replay = false, selectedId, targe
     setInspectedFeature(next.feature); onSelect(null)
   }
   const featureAnchor = inspectedFeatureView ? mapFeatureAnchor(inspectedFeatureView.position, camera, size) : null
-  return <div ref={containerRef} style={{ backgroundImage: `url(${WORLD_BACKGROUND_PATH})`, backgroundPosition: 'center', backgroundSize: 'cover' }} className={`relative h-full min-h-[420px] w-full overflow-hidden bg-space-950 ${targeting || destinationSelecting ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}>
+  return <div ref={containerRef} style={{ backgroundImage: `url(${WORLD_BACKGROUND_PATH})`, backgroundPosition: 'center', backgroundSize: 'cover' }} className={`relative h-full min-h-[420px] w-full touch-none overflow-hidden overscroll-contain bg-space-950 ${targeting || destinationSelecting ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}>
     <canvas
       ref={canvasRef} className="absolute inset-0 h-full w-full touch-none" aria-label="Tactical world map"
-      onWheel={(event) => {
-        event.preventDefault()
-        const { deltaY, deltaMode } = event
-        scheduleZoom((current) => wheelZoomCell(current, deltaY, deltaMode, size.height))
-      }}
       onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); const current = cameraRef.current; drag.current = { x: event.clientX, y: event.clientY, cameraX: current.x, cameraY: current.y, moved: false } }}
       onPointerMove={(event) => { const activeDrag = drag.current; if (!activeDrag) return; const dx = event.clientX - activeDrag.x, dy = event.clientY - activeDrag.y; if (Math.abs(dx) + Math.abs(dy) > 5) activeDrag.moved = true; const cameraX = activeDrag.cameraX, cameraY = activeDrag.cameraY; scheduleCamera((current) => ({ ...current, x: cameraX - dx / current.cell, y: cameraY - dy / current.cell })) }}
       onPointerUp={(event) => { if (drag.current && !drag.current.moved) choose(screenToWorld(event.clientX, event.clientY)); drag.current = null; publishCurrentCamera() }}
@@ -615,7 +628,7 @@ function drawWorldTerrain(ctx: CanvasRenderingContext2D, size: { width: number; 
       if (!obstacle && !resource) continue
       const [screenX, screenY] = toScreen([x, y])
       const radius = Math.max(1.5, camera.cell * (obstacle ? .22 : .18))
-      ctx.fillStyle = obstacle ? (isVisible ? '#6b7079' : '#303239') : (isVisible ? RESOURCE_GREEN_LIGHT : '#365442')
+      ctx.fillStyle = obstacle ? (isVisible ? OVERVIEW_OBSTACLE_VISIBLE : OVERVIEW_OBSTACLE_EXPLORED) : (isVisible ? RESOURCE_GREEN_LIGHT : '#365442')
       ctx.beginPath()
       if (obstacle) ctx.rect(screenX - radius, screenY - radius, radius * 2, radius * 2)
       else { ctx.moveTo(screenX, screenY - radius); ctx.lineTo(screenX + radius, screenY); ctx.lineTo(screenX, screenY + radius); ctx.lineTo(screenX - radius, screenY); ctx.closePath() }
